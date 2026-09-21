@@ -49,6 +49,16 @@ def products():
             }
         ]
     })
+@app.route("/orders")
+def orders():
+    return jsonify({
+        "orders": [
+            {
+                "id": 1001,
+                "status": "CONFIRMED"
+            }
+        ]
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8081)
