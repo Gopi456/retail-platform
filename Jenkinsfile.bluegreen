@@ -39,7 +39,10 @@ pipeline {
                     if (params.CONFIRM_PROD != 'YES') { error('Blue-green production deployment requires CONFIRM_PROD=YES') }
                 }
                 bat 'git rev-parse --verify refs/tags/v%VERSION%'
-                script { env.GIT_SHA = bat(script: 'git rev-parse HEAD', returnStdout: true).trim() }
+                script {
+                    def shaOutput = bat(script: '@git rev-list -n 1 v%VERSION%', returnStdout: true).trim()
+                    env.GIT_SHA = shaOutput.readLines().findAll { it.trim() }.last().trim()
+                }
                 echo "Release ${params.VERSION} uses commit ${env.GIT_SHA}"
             }
         }
@@ -49,18 +52,26 @@ pipeline {
             steps {
                 bat 'docker network inspect %NETWORK% >nul 2>&1 || docker network create %NETWORK%'
                 bat 'docker inspect %DB% >nul 2>&1 || docker run -d --name %DB% --network %NETWORK% -e POSTGRES_DB=retaildb -e POSTGRES_USER=retailuser -e POSTGRES_PASSWORD=%ORDERS_DB_PSW% -v orders-db-data:/var/lib/postgresql/data postgres:16-alpine'
-                bat 'powershell -NoProfile -Command "for($i=0; $i -lt 30; $i++){ $s=docker inspect %DB% --format=\"{{.State.Status}}\" 2>$null; if($s -eq \"running\"){exit 0}; Start-Sleep -Seconds 2 }; exit 1"'
+                bat '''
+                    for /L %%i in (1,1,30) do (
+                        for /F "delims=" %%s in ('docker inspect %DB% --format="{{.State.Status}}" 2^>nul') do (
+                            if /I "%%s"=="running" exit /b 0
+                        )
+                        %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
+                    )
+                    exit /b 1
+                '''
             }
-        }
-
-        stage('Unit/Application Test') {
-            when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'venv\\Scripts\\python.exe -m pytest -q' }
         }
 
         stage('Docker Build') {
             when { expression { params.ACTION == 'DEPLOY' } }
             steps { bat 'docker build --label org.opencontainers.image.revision=%GIT_SHA% -t %IMAGE%:%VERSION% .' }
+        }
+
+        stage('Unit/Application Test') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps { bat 'docker run --rm %IMAGE%:%VERSION% python -m pytest -q -p no:cacheprovider' }
         }
 
         stage('Identify active color') {
@@ -91,12 +102,22 @@ pipeline {
 
         stage('Application Health Check') {
             when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'powershell -NoProfile -Command "for($i=0; $i -lt 12; $i++){ try {$r=Invoke-WebRequest -UseBasicParsing http://localhost:%CANDIDATE_PORT%/health; if($r.StatusCode -eq 200){exit 0}} catch {}; Start-Sleep -Seconds 5 }; exit 1"' }
+            steps {
+                bat '''
+                    for /L %%i in (1,1,30) do (
+                        for /F "delims=" %%s in ('docker inspect %CANDIDATE% --format="{{.State.Health.Status}}" 2^>nul') do (
+                            if /I "%%s"=="healthy" exit /b 0
+                        )
+                        %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
+                    )
+                    exit /b 1
+                '''
+            }
         }
 
         stage('Integration Check') {
             when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'docker run --rm --network %NETWORK% -e DB_HOST=%DB% -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION% python -c "from app.database import get_db_connection; c=get_db_connection(); c.close(); print(\"database connectivity passed\")"' }
+            steps { bat "docker run --rm --network %NETWORK% -e DB_HOST=%DB% -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION% python -c \"from app.database import get_db_connection; c=get_db_connection(); c.close(); print('database connectivity passed')\"" }
         }
 
         stage('Traffic Switch') {
@@ -120,7 +141,15 @@ pipeline {
         stage('Deployment Verification') {
             steps {
                 bat 'docker ps --filter name=%ACTIVE% --filter name=%DB%'
-                bat 'powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing http://localhost:%ACTIVE_PORT%/health"'
+                bat '''
+                    for /L %%i in (1,1,30) do (
+                        for /F "delims=" %%s in ('docker inspect %ACTIVE% --format="{{.State.Health.Status}}" 2^>nul') do (
+                            if /I "%%s"=="healthy" exit /b 0
+                        )
+                        %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
+                    )
+                    exit /b 1
+                '''
             }
         }
     }
@@ -133,7 +162,8 @@ pipeline {
             }
         }
         always {
-            bat 'docker ps -a; docker images orders-api'
+            bat 'docker ps -a'
+            bat 'docker images orders-api'
             echo "Final result=${currentBuild.currentResult}; version=${params.VERSION}; commit=${env.GIT_SHA ?: 'unknown'}"
         }
     }
