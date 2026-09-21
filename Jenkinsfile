@@ -82,7 +82,7 @@ pipeline {
 							for /F "delims=" %%s in ('docker inspect %DB_CONTAINER% --format="{{.State.Status}}" 2^>nul') do (
 								if /I "%%s"=="running" exit /b 0
 							)
-							%SystemRoot%\System32\ping.exe -n 3 127.0.0.1 >nul
+							%SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
 						)
 						exit /b 1
 					'''
@@ -149,7 +149,7 @@ pipeline {
 						for /F "delims=" %%s in ('docker inspect %CANDIDATE% --format="{{.State.Health.Status}}" 2^>nul') do (
 							if /I "%%s"=="healthy" exit /b 0
 						)
-						%SystemRoot%\System32\ping.exe -n 3 127.0.0.1 >nul
+						%SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
 					)
 					exit /b 1
 				'''
@@ -205,7 +205,7 @@ pipeline {
 								for /F "delims=" %%s in ('docker inspect %APP_CONTAINER% --format="{{.State.Health.Status}}" 2^>nul') do (
 									if /I "%%s"=="healthy" exit /b 0
 								)
-								%SystemRoot%\System32\ping.exe -n 3 127.0.0.1 >nul
+								%SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
 							)
 							exit /b 1
 						'''
