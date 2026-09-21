@@ -44,6 +44,11 @@ services:
       retries: 12
 
 networks:
-  retail-network:
-    name: retail-network
+  app-network:
+    name: ${APP_NETWORK:-retail-dev-net}
     driver: bridge
+
+volumes:
+  retail-db-dev-data:
+  retail-db-uat-data:
+  retail-db-prod-data:

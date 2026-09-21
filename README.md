@@ -135,6 +135,16 @@ For production, use `ENVIRONMENT=PRODUCTION` and set `CONFIRM_PROD=YES`. Any oth
 
 Create a second Pipeline job from the same repository, set the script path to `Jenkinsfile.bluegreen`, and use branch `*/assessment/final`. It uses `orders-blue`, `orders-green`, and `orders-network`. The candidate is validated before traffic switching; failed candidates are removed while the active color remains available.
 
+For the first blue-green deployment, configure the job with:
+
+```text
+ACTION         = DEPLOY
+VERSION        = 7.9
+CONFIRM_PROD  = YES
+```
+
+The job creates `orders-network` and `orders-db` automatically when they do not exist. Add the Jenkins credential `orders-db-credentials` before starting the build. After a successful deployment, check the active endpoint at `http://localhost:8080/health`; candidate ports are `8081` and `8082` during validation.
+
 ## Where to find evidence
 
 | Evidence | Location |
