@@ -38,7 +38,7 @@ pipeline {
                     if (!params.VERSION?.trim()) { error('VERSION is required') }
                     if (params.CONFIRM_PROD != 'YES') { error('Blue-green production deployment requires CONFIRM_PROD=YES') }
                 }
-                bat 'git rev-parse --verify refs/tags/v%VERSION%'
+                bat 'git rev-parse --verify refs/tags/%VERSION%'
                 script { env.GIT_SHA = bat(script: 'git rev-parse HEAD', returnStdout: true).trim() }
                 echo "Release ${params.VERSION} uses commit ${env.GIT_SHA}"
             }
