@@ -32,9 +32,9 @@ pipeline {
 						error('Production deployment requires CONFIRM_PROD=YES')
 					}
 					def config = [
-						DEV: [branch: 'develop', container: 'retail-app-dev', db: 'retail-db-dev', network: 'retail-dev-net', port: '8081', volume: 'retail-db-dev-data'],
-						UAT: [branch: 'release', container: 'retail-app-uat', db: 'retail-db-uat', network: 'retail-uat-net', port: '8082', volume: 'retail-db-uat-data'],
-						PRODUCTION: [branch: 'main', container: 'retail-app-prod', db: 'retail-db-prod', network: 'retail-prod-net', port: '8083', volume: 'retail-db-prod-data']
+						DEV: [branch: 'assessment/develop', container: 'retail-app-dev', db: 'retail-db-dev', network: 'retail-dev-net', port: '8081', volume: 'retail-db-dev-data'],
+						UAT: [branch: 'assessment/final', container: 'retail-app-uat', db: 'retail-db-uat', network: 'retail-uat-net', port: '8082', volume: 'retail-db-uat-data'],
+						PRODUCTION: [branch: 'assessment/final', container: 'retail-app-prod', db: 'retail-db-prod', network: 'retail-prod-net', port: '8083', volume: 'retail-db-prod-data']
 					][params.ENVIRONMENT]
 					env.TARGET_BRANCH = config.branch
 					env.APP_CONTAINER = config.container
