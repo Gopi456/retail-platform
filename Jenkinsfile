@@ -53,7 +53,10 @@ pipeline {
 		stage('Validate version') {
 			steps {
 				bat 'git rev-parse --verify refs/tags/v%VERSION%'
-				script { env.GIT_SHA = bat(script: 'git rev-list -n 1 v%VERSION%', returnStdout: true).trim() }
+				script {
+					def shaOutput = bat(script: '@git rev-list -n 1 v%VERSION%', returnStdout: true).trim()
+					env.GIT_SHA = shaOutput.readLines().findAll { it.trim() }.last().trim()
+				}
 				echo "Selected Git commit: ${env.GIT_SHA}"
 			}
 		}
