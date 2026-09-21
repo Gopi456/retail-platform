@@ -80,6 +80,13 @@ pipeline {
 			}
 		}
 
+		stage('Prepare Python environment') {
+			when { expression { params.RUN_TESTS == 'YES' } }
+			steps {
+				bat '@if not exist venv\\Scripts\\python.exe (python -m venv venv && venv\\Scripts\\python.exe -m pip install --disable-pip-version-check -r app\\requirements.txt)'
+			}
+		}
+
 		stage('Record current image') {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps {
