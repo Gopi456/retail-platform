@@ -19,7 +19,6 @@ pipeline {
         stage('Validate Parameters') {
             steps {
                 script {
-
                     if (!params.VERSION?.trim()) {
                         error("VERSION cannot be empty.")
                     }
@@ -27,7 +26,6 @@ pipeline {
                     if (params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                         params.ENVIRONMENT == 'PRODUCTION' &&
                         params.CONFIRM_PROD != 'YES') {
-
                         error("Production deployment blocked: CONFIRM_PROD must be YES.")
                     }
 
@@ -39,25 +37,14 @@ pipeline {
         stage('Validate Git Version') {
             steps {
                 script {
-
                     def tagName = "v${params.VERSION}"
 
                     echo "Checking Git tag: ${tagName}"
 
-                    bat """
-                        git fetch --tags --force
-                        git rev-parse ${tagName}
-                    """
+                    bat "git fetch --tags --force"
+                    bat "git rev-parse ${tagName}"
 
-                    def commit = bat(
-                        script: "git rev-list -n 1 ${tagName}",
-                        returnStdout: true
-                    ).trim()
-
-                    echo "======================================"
-                    echo "Git tag       : ${tagName}"
-                    echo "Selected commit: ${commit}"
-                    echo "======================================"
+                    echo "Git tag ${tagName} exists."
                 }
             }
         }
@@ -73,10 +60,10 @@ pipeline {
             steps {
                 echo "Building Docker image: retail-app:${params.VERSION}"
 
-                bat """
-                    docker build -t retail-app:${params.VERSION} .
-                """
+                bat "docker build -t retail-app:${params.VERSION} ."
 
                 echo "Docker image build completed."
             }
         }
+    }
+}
