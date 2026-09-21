@@ -6,6 +6,7 @@ from app.customers import search_customers
 app = Flask(__name__)
 
 VERSION = os.getenv("APP_VERSION", "4.2.0")
+ENVIRONMENT = os.getenv("APP_ENVIRONMENT", "DEV")
 PAYMENT_STATUS = os.getenv("PAYMENT_STATUS", "AVAILABLE")
 FAIL_HEALTHCHECK = os.getenv("FAIL_HEALTHCHECK", "false").lower() == "true"
 
@@ -20,6 +21,7 @@ def home():
         <body>
             <h1>Retail Platform</h1>
             <h2>Application Version: {VERSION}</h2>
+            <p>Environment: {ENVIRONMENT}</p>
             <p>Payment Status: {PAYMENT_STATUS}</p>
         </body>
     </html>
@@ -59,7 +61,8 @@ def health():
 
     return jsonify({
         "status": "UP",
-        "version": VERSION
+        "version": VERSION,
+        "environment": ENVIRONMENT
     }), 200
 
 @app.route("/db-health")

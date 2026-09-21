@@ -4,7 +4,7 @@ import psycopg2
 
 def get_db_connection():
     return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
+        host=os.getenv("DB_HOST", "retail-db"),
         port=os.getenv("DB_PORT", "5432"),
         database=os.getenv("DB_NAME", "retaildb"),
         user=os.getenv("DB_USER", "retailuser"),

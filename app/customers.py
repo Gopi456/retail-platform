@@ -28,6 +28,7 @@ def initialize_customer_table():
 
 
 def search_customers(search_term):
+    initialize_customer_table()
     connection = get_db_connection()
     cursor = connection.cursor()
 

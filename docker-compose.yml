@@ -1,0 +1,54 @@
+services:
+  app:
+    image: retail-app:${APP_VERSION:-4.2.1}
+    container_name: ${APP_CONTAINER:-retail-app-dev}
+    ports:
+      - "${APP_PORT:-8081}:8081"
+    environment:
+      APP_VERSION: ${APP_VERSION:-4.2.1}
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-DEV}
+      PAYMENT_STATUS: ${PAYMENT_STATUS:-AVAILABLE}
+      FAIL_HEALTHCHECK: ${FAIL_HEALTHCHECK:-false}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-retaildb}
+      DB_USER: ${DB_USER:-retailuser}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be supplied}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  db:
+    image: postgres:16-alpine
+    container_name: ${DB_CONTAINER:-retail-db-dev}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-retaildb}
+      POSTGRES_USER: ${DB_USER:-retailuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be supplied}
+    volumes:
+      - ${DB_VOLUME:-retail-db-dev-data}:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+networks:
+  app-network:
+    name: ${APP_NETWORK:-retail-dev-net}
+    driver: bridge
+
+volumes:
+  retail-db-dev-data:
+  retail-db-uat-data:
+  retail-db-prod-data:
