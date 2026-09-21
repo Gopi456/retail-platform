@@ -37,6 +37,13 @@ def health():
         "version": VERSION
     }), 200
 
+@app.route("/payment")
+def payment():
+    return jsonify({
+        "payment_status": PAYMENT_STATUS,
+        "message": "Payment processing is operating normally."
+    })
+
 
 @app.route("/products")
 def products():
