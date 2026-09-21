@@ -38,5 +38,17 @@ def health():
     }), 200
 
 
+@app.route("/products")
+def products():
+    return jsonify({
+        "products": [
+            {
+                "id": 1,
+                "name": "Laptop",
+                "price": 65000
+            }
+        ]
+    })
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8081)
