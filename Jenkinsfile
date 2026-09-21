@@ -68,5 +68,15 @@ pipeline {
                 bat 'docker --version'
             }
         }
-    }
-}
+
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image: retail-app:${params.VERSION}"
+
+                bat """
+                    docker build -t retail-app:${params.VERSION} .
+                """
+
+                echo "Docker image build completed."
+            }
+        }
