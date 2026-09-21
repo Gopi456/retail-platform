@@ -77,11 +77,14 @@ pipeline {
         stage('Identify active color') {
             steps {
                 script {
-                    def blueState = bat(script: 'docker inspect %BLUE% --format="{{.State.Status}}" 2>nul', returnStatus: true)
-                    env.ACTIVE = blueState == 0 ? env.BLUE : env.GREEN
+                    def blueState = bat(script: '@docker inspect %BLUE% --format="{{.State.Status}}" 2>nul', returnStatus: true)
+                    def greenState = bat(script: '@docker inspect %GREEN% --format="{{.State.Status}}" 2>nul', returnStatus: true)
+                    env.ACTIVE = blueState == 0 ? env.BLUE : (greenState == 0 ? env.GREEN : env.BLUE)
                     env.CANDIDATE = env.ACTIVE == env.BLUE ? env.GREEN : env.BLUE
                     env.CANDIDATE_PORT = env.CANDIDATE == env.BLUE ? env.BLUE_PORT : env.GREEN_PORT
-                    env.ACTIVE_IMAGE = bat(script: "docker inspect ${env.ACTIVE} --format=\"{{.Config.Image}}\" 2>nul", returnStdout: true).trim()
+                    def activeImageOutput = bat(script: "@docker inspect ${env.ACTIVE} --format=\"{{.Config.Image}}\" 2>nul || exit /b 0", returnStdout: true).trim()
+                    def activeImageLines = activeImageOutput.readLines().findAll { it.trim() }
+                    env.ACTIVE_IMAGE = activeImageLines ? activeImageLines.last().trim() : ''
                     echo "BLUE=${env.BLUE}:${env.BLUE_PORT}; GREEN=${env.GREEN}:${env.GREEN_PORT}; active=${env.ACTIVE}; candidate=${env.CANDIDATE}"
                 }
             }
