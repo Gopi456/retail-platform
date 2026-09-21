@@ -37,6 +37,13 @@ def health():
         "version": VERSION
     }), 200
 
+@app.route("/payment")
+def payment():
+    return jsonify({
+        "payment_status": PAYMENT_STATUS,
+        "message": "Payment processing is operating normally."
+    })
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8081)
