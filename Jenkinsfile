@@ -77,7 +77,7 @@ pipeline {
 				withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${params.VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "APP_CONTAINER=${env.APP_CONTAINER}", "DB_CONTAINER=${env.DB_CONTAINER}", "APP_NETWORK=${env.APP_NETWORK}", "APP_PORT=${env.APP_PORT}", "DB_VOLUME=${env.DB_VOLUME}"]) {
 					bat 'docker network inspect %APP_NETWORK% >nul 2>&1 || docker network create %APP_NETWORK%'
 					bat 'docker inspect %DB_CONTAINER% >nul 2>&1 || docker run -d --name %DB_CONTAINER% --network %APP_NETWORK% -e POSTGRES_DB=retaildb -e POSTGRES_USER=retailuser -e POSTGRES_PASSWORD=%DB_PASSWORD% -v %DB_VOLUME%:/var/lib/postgresql/data postgres:16-alpine'
-					bat 'powershell -NoProfile -Command "for($i=0; $i -lt 30; $i++){ $s=docker inspect %DB_CONTAINER% --format=\"{{.State.Status}}\" 2>$null; if($s -eq \"running\"){exit 0}; Start-Sleep -Seconds 2 }; exit 1"'
+					bat 'for /L %%i in (1,1,30) do @docker inspect %DB_CONTAINER% --format="{{.State.Status}}" 2>nul | findstr /x /c:"running" >nul && exit /b 0 || timeout /t 2 /nobreak >nul & exit /b 1'
 				}
 			}
 		}
@@ -132,7 +132,7 @@ pipeline {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps {
 				bat 'docker inspect %CANDIDATE% --format="{{.Config.Image}} {{.State.Status}}"'
-				bat 'powershell -NoProfile -Command "for($i=0; $i -lt 12; $i++){ try {$r=Invoke-WebRequest -UseBasicParsing http://localhost:%CANDIDATE_PORT%/health; if($r.StatusCode -eq 200){exit 0}} catch {}; Start-Sleep -Seconds 5 }; exit 1"'
+				bat 'for /L %%i in (1,1,30) do @docker inspect %CANDIDATE% --format="{{.State.Health.Status}}" 2>nul | findstr /x /c:"healthy" >nul && exit /b 0 || timeout /t 2 /nobreak >nul & exit /b 1'
 				bat 'docker run --rm --network %APP_NETWORK% -e DB_HOST=%DB_CONTAINER% -e DB_PASSWORD=%DB_CREDENTIALS_PSW% retail-app:%VERSION% python -c "from app.database import get_db_connection; c=get_db_connection(); c.close(); print(\"database connectivity passed\")"'
 			}
 		}
@@ -162,7 +162,7 @@ pipeline {
 			steps {
 				bat 'docker ps --filter name=%APP_CONTAINER% --filter name=%DB_CONTAINER%'
 				bat 'docker inspect %APP_CONTAINER% --format="image={{.Config.Image}} health={{.State.Health.Status}}"'
-				bat 'powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing http://localhost:%APP_PORT%/health"'
+				bat 'docker inspect %APP_CONTAINER% --format="{{.State.Health.Status}}" | findstr /x /c:"healthy" >nul'
 			}
 		}
 	}
@@ -177,7 +177,7 @@ pipeline {
 						withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${env.PREVIOUS_VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "DB_HOST=${env.DB_CONTAINER}"]) {
 							bat 'docker run -d --name %APP_CONTAINER% --network %APP_NETWORK% -p %APP_PORT%:8081 -e APP_VERSION=%APP_VERSION% -e APP_ENVIRONMENT=%APP_ENVIRONMENT% -e DB_HOST=%DB_HOST% -e DB_PASSWORD=%DB_PASSWORD% -e DB_NAME=retaildb -e DB_USER=retailuser %PREVIOUS_IMAGE%'
 						}
-						bat 'powershell -NoProfile -Command "for($i=0; $i -lt 12; $i++){ try {$r=Invoke-WebRequest -UseBasicParsing http://localhost:%APP_PORT%/health; if($r.StatusCode -eq 200){exit 0}} catch {}; Start-Sleep -Seconds 5 }; exit 1"'
+						bat 'for /L %%i in (1,1,30) do @docker inspect %APP_CONTAINER% --format="{{.State.Health.Status}}" 2>nul | findstr /x /c:"healthy" >nul && exit /b 0 || timeout /t 2 /nobreak >nul & exit /b 1'
 						echo "Candidate removed; previous image restored: ${env.PREVIOUS_IMAGE}"
 					} else {
 						echo 'Candidate removed; no previous image existed to restore.'
