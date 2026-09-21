@@ -1,0 +1,131 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        choice(name: 'ACTION', choices: ['DEPLOY', 'ROLLBACK'], description: 'Blue-green operation')
+        string(name: 'VERSION', defaultValue: '7.9', description: 'Git tag and immutable image version')
+        choice(name: 'CONFIRM_PROD', choices: ['NO', 'YES'], description: 'Required for production')
+    }
+
+    environment {
+        IMAGE = 'orders-api'
+        ORDERS_DB = credentials('orders-db-credentials')
+        NETWORK = 'orders-network'
+        BLUE = 'orders-blue'
+        GREEN = 'orders-green'
+        DB = 'orders-db'
+        ACTIVE_PORT = '8080'
+        BLUE_PORT = '8081'
+        GREEN_PORT = '8082'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                bat 'git fetch --all --tags'
+            }
+        }
+
+        stage('Validate request') {
+            steps {
+                script {
+                    if (!params.VERSION?.trim()) { error('VERSION is required') }
+                    if (params.CONFIRM_PROD != 'YES') { error('Blue-green production deployment requires CONFIRM_PROD=YES') }
+                }
+                bat 'git rev-parse --verify refs/tags/%VERSION%'
+                script { env.GIT_SHA = bat(script: 'git rev-parse HEAD', returnStdout: true).trim() }
+                echo "Release ${params.VERSION} uses commit ${env.GIT_SHA}"
+            }
+        }
+
+        stage('Unit/Application Test') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps { bat 'venv\\Scripts\\python.exe -m pytest -q' }
+        }
+
+        stage('Docker Build') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps { bat 'docker build --label org.opencontainers.image.revision=%GIT_SHA% -t %IMAGE%:%VERSION% .' }
+        }
+
+        stage('Identify active color') {
+            steps {
+                script {
+                    def blueState = bat(script: 'docker inspect %BLUE% --format="{{.State.Status}}" 2>nul', returnStatus: true)
+                    env.ACTIVE = blueState == 0 ? env.BLUE : env.GREEN
+                    env.CANDIDATE = env.ACTIVE == env.BLUE ? env.GREEN : env.BLUE
+                    env.CANDIDATE_PORT = env.CANDIDATE == env.BLUE ? env.BLUE_PORT : env.GREEN_PORT
+                    env.ACTIVE_IMAGE = bat(script: "docker inspect ${env.ACTIVE} --format=\"{{.Config.Image}}\" 2>nul", returnStdout: true).trim()
+                    echo "BLUE=${env.BLUE}:${env.BLUE_PORT}; GREEN=${env.GREEN}:${env.GREEN_PORT}; active=${env.ACTIVE}; candidate=${env.CANDIDATE}"
+                }
+            }
+        }
+
+        stage('Start candidate') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps {
+                bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+                bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+            }
+        }
+
+        stage('Container Validation') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps { bat 'docker inspect %CANDIDATE% --format="image={{.Config.Image}} status={{.State.Status}} network={{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}"' }
+        }
+
+        stage('Application Health Check') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps { bat 'powershell -NoProfile -Command "for($i=0; $i -lt 12; $i++){ try {$r=Invoke-WebRequest -UseBasicParsing http://localhost:%CANDIDATE_PORT%/health; if($r.StatusCode -eq 200){exit 0}} catch {}; Start-Sleep -Seconds 5 }; exit 1"' }
+        }
+
+        stage('Integration Check') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps { bat 'docker run --rm --network %NETWORK% -e DB_HOST=%DB% -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION% python -c "from app.database import get_db_connection; c=get_db_connection(); c.close(); print(\"database connectivity passed\")"' }
+        }
+
+        stage('Traffic Switch') {
+            when { expression { params.ACTION == 'DEPLOY' } }
+            steps {
+                bat 'docker rm -f %ACTIVE% 2>nul || exit /b 0'
+                bat 'docker run -d --name %ACTIVE% --network %NETWORK% -p %ACTIVE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+                bat 'docker rm -f %CANDIDATE%'
+                echo "Traffic switched to ${params.VERSION}; active color=${env.ACTIVE}"
+            }
+        }
+
+        stage('Rollback') {
+            when { expression { params.ACTION == 'ROLLBACK' } }
+            steps {
+                bat 'docker rm -f %ACTIVE% 2>nul || exit /b 0'
+                bat 'docker run -d --name %ACTIVE% --network %NETWORK% -p %ACTIVE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+            }
+        }
+
+        stage('Deployment Verification') {
+            steps {
+                bat 'docker ps --filter name=%ACTIVE% --filter name=%DB%'
+                bat 'powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing http://localhost:%ACTIVE_PORT%/health"'
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+                echo "Candidate ${env.CANDIDATE ?: 'unknown'} removed; active ${env.ACTIVE ?: 'unknown'} was retained where possible."
+            }
+        }
+        always {
+            bat 'docker ps -a; docker images orders-api'
+            echo "Final result=${currentBuild.currentResult}; version=${params.VERSION}; commit=${env.GIT_SHA ?: 'unknown'}"
+        }
+    }
+}
