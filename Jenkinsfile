@@ -1,767 +1,766 @@
 pipeline {
-agent any
 
+    agent any
 
-environment {
-    APP_NAME       = 'retail-app'
-    NETWORK_NAME   = 'retail-network'
-    PROD_CONTAINER = 'retail-app-production'
-    NEW_CONTAINER  = 'retail-app-new'
-    UAT_CONTAINER  = 'retail-app-uat'
+    parameters {
 
-    PROD_PORT      = '8081'
-    NEW_PORT       = '8082'
-    UAT_PORT       = '8083'
-}
+        choice(
+            name: 'DEPLOYMENT_ACTION',
+            choices: ['DEPLOY', 'ROLLBACK'],
+            description: 'Choose deployment or rollback action'
+        )
 
-parameters {
-    choice(
-        name: 'DEPLOYMENT_ACTION',
-        choices: ['DEPLOY', 'ROLLBACK'],
-        description: 'Select deployment action'
-    )
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['UAT', 'PRODUCTION'],
+            description: 'Target deployment environment'
+        )
 
-    choice(
-        name: 'ENVIRONMENT',
-        choices: ['UAT', 'PRODUCTION'],
-        description: 'Select target environment'
-    )
+        string(
+            name: 'VERSION',
+            defaultValue: '4.2.1',
+            description: 'Application version/tag to deploy, for example 4.2.1'
+        )
 
-    string(
-        name: 'VERSION',
-        defaultValue: '4.2.1',
-        description: 'Application version, for example 4.2.1'
-    )
-
-    choice(
-        name: 'CONFIRM_PROD',
-        choices: ['NO', 'YES'],
-        description: 'Must be YES for production deployment'
-    )
-}
-
-stages {
-
-    stage('Show Parameters') {
-        steps {
-            echo "=============================================="
-            echo "       RETAIL PLATFORM DEPLOYMENT"
-            echo "=============================================="
-            echo "Deployment action : ${params.DEPLOYMENT_ACTION}"
-            echo "Environment       : ${params.ENVIRONMENT}"
-            echo "Requested version : ${params.VERSION}"
-            echo "Production confirm: ${params.CONFIRM_PROD}"
-            echo "=============================================="
-        }
+        choice(
+            name: 'CONFIRM_PROD',
+            choices: ['NO', 'YES'],
+            description: 'Production deployment confirmation'
+        )
     }
 
-    stage('Validate Parameters') {
-        steps {
-            script {
+    environment {
 
-                if (!params.VERSION?.trim()) {
-                    error("VERSION cannot be empty.")
-                }
+        APP_NAME = 'retail-app'
+        NETWORK_NAME = 'retail-network'
 
-                if (!(params.VERSION ==~ /^\d+\.\d+\.\d+$/)) {
-                    error(
-                        "Invalid VERSION '${params.VERSION}'. " +
-                        "Use format such as 4.2.1"
-                    )
-                }
+        PROD_CONTAINER = 'retail-app-production'
+        NEW_CONTAINER = 'retail-app-new'
+        UAT_CONTAINER = 'retail-app-uat'
 
-                if (
-                    params.DEPLOYMENT_ACTION == 'DEPLOY' &&
-                    params.ENVIRONMENT == 'PRODUCTION' &&
-                    params.CONFIRM_PROD != 'YES'
-                ) {
-                    error(
-                        "Production deployment BLOCKED. " +
-                        "CONFIRM_PROD must be YES."
-                    )
-                }
+        PROD_PORT = '8081'
+        NEW_PORT = '8082'
+        UAT_PORT = '8083'
 
-                echo "Parameter validation PASSED."
-            }
-        }
+        PREVIOUS_IMAGE = ''
+        PREVIOUS_VERSION = ''
+        FAIL_HEALTH = 'false'
     }
 
-    stage('Validate Git Version') {
-        steps {
-            script {
+    stages {
 
-                def tagName = "v${params.VERSION}"
+        stage('Show Parameters') {
+            steps {
+                echo '=========================================='
+                echo '      RETAIL PLATFORM DEPLOYMENT'
+                echo '=========================================='
 
-                echo "=============================================="
-                echo "          GIT VERSION VALIDATION"
-                echo "=============================================="
+                echo "Deployment Action : ${params.DEPLOYMENT_ACTION}"
+                echo "Environment       : ${params.ENVIRONMENT}"
+                echo "Requested Version : ${params.VERSION}"
+                echo "Production Confirm: ${params.CONFIRM_PROD}"
 
-                echo "Checking Git tag: ${tagName}"
-
-                bat "git fetch --tags --force"
-
-                bat "git rev-parse ${tagName}"
-
-                def selectedCommit = bat(
-                    script: "git rev-list -n 1 ${tagName}",
-                    returnStdout: true
-                ).trim()
-
-                /*
-                 * Jenkins bat(returnStdout:true) can include the
-                 * command line itself. Extract the final 40-character
-                 * commit hash.
-                 */
-                def matcher = selectedCommit =~ /[0-9a-fA-F]{40}/
-
-                if (matcher.find()) {
-                    env.SELECTED_COMMIT = matcher.group(0)
-                } else {
-                    error("Could not determine Git commit for ${tagName}")
-                }
-
-                echo "Git Release Information"
-                echo "Git tag        : ${tagName}"
-                echo "Selected commit: ${env.SELECTED_COMMIT}"
-
-                echo "Git tag validation PASSED."
-            }
-        }
-    }
-
-    stage('Verify Workspace') {
-        steps {
-
-            echo "=============================================="
-            echo "          VERIFYING TOOLS"
-            echo "=============================================="
-
-            bat 'git --version'
-            bat 'docker --version'
-            bat 'docker info'
-
-            echo "Workspace verification PASSED."
-        }
-    }
-
-    stage('Build Docker Image') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY'
+                echo '=========================================='
             }
         }
 
-        steps {
+        stage('Validate Parameters') {
+            steps {
+                script {
 
-            echo "=============================================="
-            echo "          BUILDING DOCKER IMAGE"
-            echo "=============================================="
-
-            echo "Image: ${APP_NAME}:${params.VERSION}"
-
-            bat """
-                docker build -t ${APP_NAME}:${params.VERSION} .
-            """
-
-            echo "Docker image build PASSED."
-
-            bat "docker images ${APP_NAME}:${params.VERSION}"
-        }
-    }
-
-    stage('Prepare Docker Network') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY'
-            }
-        }
-
-        steps {
-
-            echo "Checking Docker network: ${NETWORK_NAME}"
-
-            bat """
-                docker network inspect ${NETWORK_NAME} >nul 2>&1
-
-                if errorlevel 1 (
-                    echo Network does not exist.
-                    echo Creating ${NETWORK_NAME}...
-                    docker network create ${NETWORK_NAME}
-                ) else (
-                    echo Network ${NETWORK_NAME} already exists.
-                )
-            """
-        }
-    }
-
-    stage('Record Previous Production') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY'
-            }
-        }
-
-        steps {
-
-            script {
-
-                def existingContainer = bat(
-                    script: """
-                        docker ps -a --filter "name=^${PROD_CONTAINER}\$" --format "{{.Names}}"
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                if (existingContainer == env.PROD_CONTAINER) {
-
-                    echo "Existing production container found."
-
-                    def previousImageOutput = bat(
-                        script: """
-                            docker inspect ${PROD_CONTAINER} --format="{{.Config.Image}}"
-                        """,
-                        returnStdout: true
-                    ).trim()
-
-                    def imageMatcher =
-                        previousImageOutput =~ /retail-app:[0-9]+\.[0-9]+\.[0-9]+/
-
-                    if (imageMatcher.find()) {
-                        env.PREVIOUS_IMAGE = imageMatcher.group(0)
-                    } else {
-                        env.PREVIOUS_IMAGE = previousImageOutput
+                    if (params.VERSION.trim() == '') {
+                        error('VERSION cannot be empty.')
                     }
 
-                    echo "Previous production image: ${env.PREVIOUS_IMAGE}"
-
-                } else {
-
-                    env.PREVIOUS_IMAGE = ""
-
-                    echo "No existing production container found."
-                    echo "This will be treated as the initial deployment."
-                }
-            }
-        }
-    }
-
-    stage('Start New Version') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY'
-            }
-        }
-
-        steps {
-
-            echo "=============================================="
-            echo "          STARTING NEW VERSION"
-            echo "=============================================="
-
-            bat """
-                docker rm -f ${NEW_CONTAINER} 2>nul
-            """
-
-            bat """
-                docker run -d ^
-                --name ${NEW_CONTAINER} ^
-                --network ${NETWORK_NAME} ^
-                -p ${NEW_PORT}:8081 ^
-                -e APP_VERSION=${params.VERSION} ^
-                -e PAYMENT_STATUS=FIXED ^
-                -e FAIL_HEALTHCHECK=false ^
-                --restart unless-stopped ^
-                ${APP_NAME}:${params.VERSION}
-            """
-
-            echo "New version started."
-            echo "Temporary validation port: ${NEW_PORT}"
-
-            bat "docker ps -a"
-        }
-    }
-
-    stage('Health Check New Version') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY'
-            }
-        }
-
-        steps {
-
-            script {
-
-                echo "=============================================="
-                echo "       HEALTH CHECK NEW VERSION"
-                echo "=============================================="
-
-                echo "Version : ${params.VERSION}"
-                echo "Container: ${NEW_CONTAINER}"
-
-                bat """
-                    echo Waiting for Docker health check...
-
-                    "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 5"
-
-                    docker inspect ${NEW_CONTAINER} --format="{{.State.Health.Status}}"
-                """
-
-                def healthStatus = ""
-
-                for (int i = 1; i <= 6; i++) {
-
-                    healthStatus = bat(
-                        script: """
-                            docker inspect ${NEW_CONTAINER} --format="{{.State.Health.Status}}"
-                        """,
-                        returnStdout: true
-                    ).trim()
-
-                    echo "Health check attempt ${i}/6"
-                    echo "Docker health status: ${healthStatus}"
-
-                    if (healthStatus.contains("healthy")) {
-
-                        echo "=============================================="
-                        echo "       NEW VERSION HEALTHY"
-                        echo "=============================================="
-
-                        break
-                    }
-
-                    if (healthStatus.contains("unhealthy")) {
-
-                        echo "=============================================="
-                        echo "       NEW VERSION UNHEALTHY"
-                        echo "=============================================="
-
-                        bat "docker logs ${NEW_CONTAINER}"
+                    if (params.ENVIRONMENT == 'PRODUCTION' &&
+                        params.DEPLOYMENT_ACTION == 'DEPLOY' &&
+                        params.CONFIRM_PROD != 'YES') {
 
                         error(
-                            "New version ${params.VERSION} failed health check."
+                            'Production deployment blocked. CONFIRM_PROD must be YES.'
                         )
                     }
 
-                    if (i < 6) {
+                    echo 'Parameter validation successful.'
+                }
+            }
+        }
 
-                        echo "Container still starting."
-                        echo "Waiting 5 seconds..."
+        stage('Validate Git Version') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY'
+                }
+            }
 
-                        bat """
-                            "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 5"
-                        """
+            steps {
+                script {
+
+                    def tagName = "v${params.VERSION}"
+
+                    echo "Checking Git tag: ${tagName}"
+
+                    def tagExists = bat(
+                        script: """
+                            git rev-parse --verify refs/tags/${tagName} >nul 2>&1
+                        """,
+                        returnStatus: true
+                    )
+
+                    if (tagExists != 0) {
+                        error(
+                            "Git tag ${tagName} does not exist. " +
+                            "Create and push the tag before deployment."
+                        )
                     }
+
+                    def commitId = bat(
+                        script: """
+                            git rev-list -n 1 ${tagName}
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Selected Git tag   : ${tagName}"
+                    echo "Selected Git commit: ${commitId}"
+
+                    env.SELECTED_COMMIT = commitId
                 }
+            }
+        }
 
-                if (!healthStatus.contains("healthy")) {
+        stage('Verify Workspace') {
+            steps {
+                bat '''
+                    echo Current workspace:
+                    cd
 
-                    bat "docker logs ${NEW_CONTAINER}"
+                    echo.
+                    echo Git branch:
+                    git branch --show-current
 
-                    error(
-                        "New version ${params.VERSION} did not become healthy."
-                    )
+                    echo.
+                    echo Latest commits:
+                    git log --oneline -5
+
+                    echo.
+                    echo Repository files:
+                    dir
+                '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY'
+                }
+            }
+
+            steps {
+                script {
+
+                    echo "Building Docker image:"
+                    echo "${env.APP_NAME}:${params.VERSION}"
+
+                    bat """
+                        docker build ^
+                            -t ${env.APP_NAME}:${params.VERSION} ^
+                            .
+                    """
+
+                    echo "Docker image ${env.APP_NAME}:${params.VERSION} built successfully."
+
+                    bat """
+                        docker images ${env.APP_NAME}
+                    """
                 }
             }
         }
-    }
 
-    stage('Deploy to UAT') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY' &&
-                params.ENVIRONMENT == 'UAT'
-            }
-        }
-
-        steps {
-
-            echo "=============================================="
-            echo "              UAT DEPLOYMENT"
-            echo "=============================================="
-
-            echo "UAT port: ${UAT_PORT}"
-
-            bat """
-                docker rm -f ${UAT_CONTAINER} 2>nul
-
-                docker run -d ^
-                --name ${UAT_CONTAINER} ^
-                --network ${NETWORK_NAME} ^
-                -p ${UAT_PORT}:8081 ^
-                -e APP_VERSION=${params.VERSION} ^
-                -e PAYMENT_STATUS=FIXED ^
-                -e FAIL_HEALTHCHECK=false ^
-                --restart unless-stopped ^
-                ${APP_NAME}:${params.VERSION}
-            """
-
-            echo "UAT container started."
-
-            bat """
-                "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 5"
-            """
-
-            bat """
-                docker inspect ${UAT_CONTAINER} --format="{{.State.Health.Status}}"
-            """
-
-            script {
-
-                def uatHealth = bat(
-                    script: """
-                        docker inspect ${UAT_CONTAINER} --format="{{.State.Health.Status}}"
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                if (!uatHealth.contains("healthy")) {
-
-                    bat "docker logs ${UAT_CONTAINER}"
-
-                    error(
-                        "UAT deployment health check failed."
-                    )
-                }
-
-                echo "=============================================="
-                echo "       UAT DEPLOYMENT SUCCESSFUL"
-                echo "=============================================="
-            }
-        }
-    }
-
-    stage('Promote to Production') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY' &&
-                params.ENVIRONMENT == 'PRODUCTION'
-            }
-        }
-
-        steps {
-
-            script {
-
-                echo "=============================================="
-                echo "          PRODUCTION PROMOTION"
-                echo "=============================================="
-
-                echo "Approved version: ${params.VERSION}"
-                echo "Previous image  : ${env.PREVIOUS_IMAGE}"
-
-                echo "New version already passed health check."
-                echo "Switching production to the approved version."
-
-                /*
-                 * Production currently runs on 8081.
-                 * The new version was validated separately on 8082.
-                 *
-                 * The old production container is removed only after
-                 * the new version has passed its health check.
-                 */
-
-                bat """
-                    echo Stopping previous production container...
-
-                    docker rm -f ${PROD_CONTAINER} 2>nul
-
-                    echo Starting new version on production port...
-
-                    docker run -d ^
-                    --name ${PROD_CONTAINER} ^
-                    --network ${NETWORK_NAME} ^
-                    -p ${PROD_PORT}:8081 ^
-                    -e APP_VERSION=${params.VERSION} ^
-                    -e PAYMENT_STATUS=FIXED ^
-                    -e FAIL_HEALTHCHECK=false ^
-                    --restart unless-stopped ^
-                    ${APP_NAME}:${params.VERSION}
-
-                    echo Removing temporary validation container...
-
-                    docker rm -f ${NEW_CONTAINER} 2>nul
-                """
-
-                echo "Production container started."
-            }
-        }
-    }
-
-    stage('Final Production Health Check') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY' &&
-                params.ENVIRONMENT == 'PRODUCTION'
-            }
-        }
-
-        steps {
-
-            script {
-
-                echo "=============================================="
-                echo "       FINAL PRODUCTION HEALTH CHECK"
-                echo "=============================================="
-
-                bat """
-                    "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 5"
-                """
-
-                def productionHealth = bat(
-                    script: """
-                        docker inspect ${PROD_CONTAINER} --format="{{.State.Health.Status}}"
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                echo "Production Docker health: ${productionHealth}"
-
-                if (!productionHealth.contains("healthy")) {
-
-                    echo "Production health check FAILED."
-
-                    bat "docker logs ${PROD_CONTAINER}"
-
-                    error(
-                        "Production deployment failed health verification."
-                    )
-                }
-
-                echo "=============================================="
-                echo "       PRODUCTION HEALTHY"
-                echo "=============================================="
-
-                bat """
-                    docker ps
-                    docker inspect ${PROD_CONTAINER} --format="{{.State.Health.Status}}"
-                """
-            }
-        }
-    }
-
-    stage('Rollback') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'ROLLBACK'
-            }
-        }
-
-        steps {
-
-            script {
-
-                echo "=============================================="
-                echo "             MANUAL ROLLBACK"
-                echo "=============================================="
-
-                def rollbackImage =
-                    "${APP_NAME}:${params.VERSION}"
-
-                echo "Rollback image: ${rollbackImage}"
-
-                bat """
-                    docker image inspect ${rollbackImage} >nul 2>&1
+        stage('Prepare Docker Network') {
+            steps {
+                bat '''
+                    docker network inspect retail-network >nul 2>&1
 
                     if errorlevel 1 (
-                        echo Rollback image does not exist.
-                        exit /b 1
+                        echo Creating Docker network retail-network...
+                        docker network create retail-network
+                    ) else (
+                        echo Docker network retail-network already exists.
                     )
-                """
 
-                bat """
-                    docker rm -f ${PROD_CONTAINER} 2>nul
+                    echo.
+                    docker network inspect retail-network
+                '''
+            }
+        }
 
-                    docker run -d ^
-                    --name ${PROD_CONTAINER} ^
-                    --network ${NETWORK_NAME} ^
-                    -p ${PROD_PORT}:8081 ^
-                    -e APP_VERSION=${params.VERSION} ^
-                    -e PAYMENT_STATUS=FIXED ^
-                    -e FAIL_HEALTHCHECK=false ^
-                    --restart unless-stopped ^
-                    ${rollbackImage}
-                """
-
-                bat """
-                    "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 5"
-                """
-
-                def rollbackHealth = bat(
-                    script: """
-                        docker inspect ${PROD_CONTAINER} --format="{{.State.Health.Status}}"
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                echo "Rollback health: ${rollbackHealth}"
-
-                if (!rollbackHealth.contains("healthy")) {
-
-                    bat "docker logs ${PROD_CONTAINER}"
-
-                    error(
-                        "Rollback completed but restored version is unhealthy."
-                    )
+        stage('Record Previous Production') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY' &&
+                    params.ENVIRONMENT == 'PRODUCTION'
                 }
-
-                echo "=============================================="
-                echo "       MANUAL ROLLBACK VERIFIED"
-                echo "=============================================="
             }
-        }
-    }
 
-    stage('Deployment Verification') {
-        when {
-            expression {
-                params.DEPLOYMENT_ACTION == 'DEPLOY'
-            }
-        }
+            steps {
+                script {
 
-        steps {
+                    def existingContainer = bat(
+                        script: """
+                            docker ps -a --filter "name=^${env.PROD_CONTAINER}\$" --format "{{.Names}}"
+                        """,
+                        returnStdout: true
+                    ).trim()
 
-            echo "=============================================="
-            echo "          DEPLOYMENT VERIFICATION"
-            echo "=============================================="
+                    if (existingContainer == env.PROD_CONTAINER) {
 
-            bat "docker ps"
+                        def previousImage = bat(
+                            script: """
+                                docker inspect ${env.PROD_CONTAINER} --format="{{.Config.Image}}"
+                            """,
+                            returnStdout: true
+                        ).trim()
 
-            bat "docker images ${APP_NAME}"
+                        env.PREVIOUS_IMAGE = previousImage
 
-            echo "Selected Git commit: ${env.SELECTED_COMMIT}"
-            echo "Requested version  : ${params.VERSION}"
-            echo "Environment        : ${params.ENVIRONMENT}"
+                        echo "Previous production image: ${env.PREVIOUS_IMAGE}"
 
-            echo "Deployment verification completed."
-        }
-    }
-}
+                        def previousVersion = previousImage.replace(
+                            "${env.APP_NAME}:",
+                            ''
+                        )
 
-post {
+                        env.PREVIOUS_VERSION = previousVersion
 
-    success {
+                        echo "Previous production version: ${env.PREVIOUS_VERSION}"
 
-        echo "=============================================="
-        echo "        JENKINS BUILD SUCCESSFUL"
-        echo "=============================================="
+                    } else {
 
-        echo "Version     : ${params.VERSION}"
-        echo "Environment : ${params.ENVIRONMENT}"
-        echo "Action      : ${params.DEPLOYMENT_ACTION}"
-    }
+                        env.PREVIOUS_IMAGE = ''
+                        env.PREVIOUS_VERSION = ''
 
-    failure {
-
-        echo "=============================================="
-        echo "          JENKINS BUILD FAILED"
-        echo "=============================================="
-
-        echo "Version     : ${params.VERSION}"
-        echo "Environment : ${params.ENVIRONMENT}"
-        echo "Action      : ${params.DEPLOYMENT_ACTION}"
-
-        script {
-
-            /*
-             * Remove temporary container after any failed deployment.
-             */
-            bat """
-                docker rm -f ${NEW_CONTAINER} 2>nul
-            """
-
-            /*
-             * Automatic production rollback.
-             *
-             * This is used only when an existing production image
-             * was recorded before the deployment.
-             */
-
-            if (
-                params.DEPLOYMENT_ACTION == 'DEPLOY' &&
-                params.ENVIRONMENT == 'PRODUCTION' &&
-                env.PREVIOUS_IMAGE?.trim()
-            ) {
-
-                echo "=============================================="
-                echo "       AUTOMATIC ROLLBACK STARTED"
-                echo "=============================================="
-
-                echo "Previous production image:"
-                echo "${env.PREVIOUS_IMAGE}"
-
-                /*
-                 * Remove failed/new production version.
-                 */
-                bat """
-                    echo Removing failed production version...
-
-                    docker rm -f ${PROD_CONTAINER} 2>nul
-                """
-
-                /*
-                 * Restore previous production image.
-                 */
-                bat """
-                    echo Restoring previous production image...
-
-                    docker run -d ^
-                    --name ${PROD_CONTAINER} ^
-                    --network ${NETWORK_NAME} ^
-                    -p ${PROD_PORT}:8081 ^
-                    -e APP_VERSION=${env.PREVIOUS_IMAGE.replace('retail-app:', '')} ^
-                    -e PAYMENT_STATUS=FIXED ^
-                    -e FAIL_HEALTHCHECK=false ^
-                    --restart unless-stopped ^
-                    ${env.PREVIOUS_IMAGE}
-                """
-
-                bat """
-                    "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 5"
-                """
-
-                def restoredHealth = bat(
-                    script: """
-                        docker inspect ${PROD_CONTAINER} --format="{{.State.Health.Status}}"
-                    """,
-                    returnStdout: true
-                ).trim()
-
-                echo "Restored production health: ${restoredHealth}"
-
-                if (restoredHealth.contains("healthy")) {
-
-                    echo "=============================================="
-                    echo "       AUTOMATIC ROLLBACK VERIFIED"
-                    echo "=============================================="
-
-                    echo "Restored image: ${env.PREVIOUS_IMAGE}"
-                    echo "Production service is healthy."
-                    echo "Jenkins build remains FAILURE because rollback was required."
-
-                } else {
-
-                    echo "=============================================="
-                    echo "       ROLLBACK HEALTH CHECK FAILED"
-                    echo "=============================================="
-
-                    bat "docker logs ${PROD_CONTAINER}"
+                        echo 'No existing production container found.'
+                        echo 'This is an initial production deployment.'
+                    }
                 }
             }
         }
+
+        stage('Start New Version') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY'
+                }
+            }
+
+            steps {
+                script {
+
+                    /*
+                     * FAILURE INJECTION
+                     *
+                     * Version 4.2.2 is intentionally configured
+                     * to fail its Docker health check.
+                     *
+                     * All other versions start normally.
+                     */
+                    if (params.VERSION == '4.2.2') {
+                        env.FAIL_HEALTH = 'true'
+
+                        echo '=========================================='
+                        echo 'FAILURE INJECTION ENABLED'
+                        echo 'Version: 4.2.2'
+                        echo 'FAIL_HEALTHCHECK=true'
+                        echo 'Expected result: health check failure'
+                        echo '=========================================='
+
+                    } else {
+                        env.FAIL_HEALTH = 'false'
+
+                        echo "Normal deployment."
+                        echo "FAIL_HEALTHCHECK=false"
+                    }
+
+                    bat """
+                        docker rm -f ${env.NEW_CONTAINER} 2>nul
+
+                        docker run -d ^
+                            --name ${env.NEW_CONTAINER} ^
+                            --network ${env.NETWORK_NAME} ^
+                            -p ${env.NEW_PORT}:8081 ^
+                            -e APP_VERSION=${params.VERSION} ^
+                            -e PAYMENT_STATUS=FIXED ^
+                            -e FAIL_HEALTHCHECK=${env.FAIL_HEALTH} ^
+                            --restart unless-stopped ^
+                            ${env.APP_NAME}:${params.VERSION}
+                    """
+
+                    echo "New version started on temporary port ${env.NEW_PORT}."
+                    echo "Container: ${env.NEW_CONTAINER}"
+                    echo "Image: ${env.APP_NAME}:${params.VERSION}"
+                }
+            }
+        }
+
+        stage('Health Check New Version') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY'
+                }
+            }
+
+            steps {
+                script {
+
+                    echo 'Waiting for Docker health check...'
+
+                    bat """
+                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                    """
+
+                    def healthStatus = bat(
+                        script: """
+                            docker inspect ${env.NEW_CONTAINER} --format="{{.State.Health.Status}}"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "New version health status: ${healthStatus}"
+
+                    bat """
+                        docker ps -a --filter "name=${env.NEW_CONTAINER}"
+                    """
+
+                    if (healthStatus != 'healthy') {
+
+                        echo '=========================================='
+                        echo 'NEW VERSION HEALTH CHECK FAILED'
+                        echo "Version: ${params.VERSION}"
+                        echo "Health : ${healthStatus}"
+                        echo 'Automatic rollback will be triggered.'
+                        echo '=========================================='
+
+                        error(
+                            "Health check failed for ${env.APP_NAME}:${params.VERSION}"
+                        )
+                    }
+
+                    echo 'New version health check PASSED.'
+                }
+            }
+        }
+
+        stage('Deploy to UAT') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY' &&
+                    params.ENVIRONMENT == 'UAT'
+                }
+            }
+
+            steps {
+                script {
+
+                    echo 'Deploying new version to UAT...'
+
+                    bat """
+                        docker rm -f ${env.UAT_CONTAINER} 2>nul
+
+                        docker run -d ^
+                            --name ${env.UAT_CONTAINER} ^
+                            --network ${env.NETWORK_NAME} ^
+                            -p ${env.UAT_PORT}:8081 ^
+                            -e APP_VERSION=${params.VERSION} ^
+                            -e PAYMENT_STATUS=FIXED ^
+                            -e FAIL_HEALTHCHECK=false ^
+                            --restart unless-stopped ^
+                            ${env.APP_NAME}:${params.VERSION}
+                    """
+
+                    echo 'Waiting for UAT health check...'
+
+                    bat """
+                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                    """
+
+                    def uatHealth = bat(
+                        script: """
+                            docker inspect ${env.UAT_CONTAINER} --format="{{.State.Health.Status}}"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "UAT health status: ${uatHealth}"
+
+                    if (uatHealth != 'healthy') {
+                        error('UAT deployment health check failed.')
+                    }
+
+                    echo 'UAT deployment successful.'
+                }
+            }
+        }
+
+        stage('Promote to Production') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY' &&
+                    params.ENVIRONMENT == 'PRODUCTION'
+                }
+            }
+
+            steps {
+                script {
+
+                    echo '=========================================='
+                    echo 'PROMOTING VERSION TO PRODUCTION'
+                    echo '=========================================='
+
+                    /*
+                     * The new version has already been started
+                     * and health-checked on port 8082.
+                     *
+                     * Only after successful validation do we
+                     * replace the production container.
+                     */
+
+                    bat """
+                        docker rm -f ${env.PROD_CONTAINER} 2>nul
+                    """
+
+                    echo 'Old production container removed.'
+
+                    bat """
+                        docker run -d ^
+                            --name ${env.PROD_CONTAINER} ^
+                            --network ${env.NETWORK_NAME} ^
+                            -p ${env.PROD_PORT}:8081 ^
+                            -e APP_VERSION=${params.VERSION} ^
+                            -e PAYMENT_STATUS=FIXED ^
+                            -e FAIL_HEALTHCHECK=false ^
+                            --restart unless-stopped ^
+                            ${env.APP_NAME}:${params.VERSION}
+                    """
+
+                    echo 'New production container started.'
+                }
+            }
+        }
+
+        stage('Final Production Health Check') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'DEPLOY' &&
+                    params.ENVIRONMENT == 'PRODUCTION'
+                }
+            }
+
+            steps {
+                script {
+
+                    echo 'Waiting for final production health check...'
+
+                    bat """
+                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                    """
+
+                    def productionHealth = bat(
+                        script: """
+                            docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Final production health status: ${productionHealth}"
+
+                    if (productionHealth != 'healthy') {
+
+                        echo '=========================================='
+                        echo 'PRODUCTION HEALTH CHECK FAILED'
+                        echo 'Automatic rollback required.'
+                        echo '=========================================='
+
+                        error(
+                            "Production health check failed for ${params.VERSION}"
+                        )
+                    }
+
+                    echo '=========================================='
+                    echo 'PRODUCTION DEPLOYMENT HEALTHY'
+                    echo "Version: ${params.VERSION}"
+                    echo '=========================================='
+                }
+            }
+        }
+
+        stage('Rollback Manual Action') {
+            when {
+                expression {
+                    params.DEPLOYMENT_ACTION == 'ROLLBACK'
+                }
+            }
+
+            steps {
+                script {
+
+                    echo '=========================================='
+                    echo 'MANUAL ROLLBACK REQUESTED'
+                    echo '=========================================='
+
+                    def imageExists = bat(
+                        script: """
+                            docker image inspect ${env.APP_NAME}:${params.VERSION} >nul 2>&1
+                        """,
+                        returnStatus: true
+                    )
+
+                    if (imageExists != 0) {
+                        error(
+                            "Rollback image ${env.APP_NAME}:${params.VERSION} does not exist."
+                        )
+                    }
+
+                    bat """
+                        docker rm -f ${env.PROD_CONTAINER} 2>nul
+
+                        docker run -d ^
+                            --name ${env.PROD_CONTAINER} ^
+                            --network ${env.NETWORK_NAME} ^
+                            -p ${env.PROD_PORT}:8081 ^
+                            -e APP_VERSION=${params.VERSION} ^
+                            -e PAYMENT_STATUS=FIXED ^
+                            -e FAIL_HEALTHCHECK=false ^
+                            --restart unless-stopped ^
+                            ${env.APP_NAME}:${params.VERSION}
+                    """
+
+                    bat """
+                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                    """
+
+                    def rollbackHealth = bat(
+                        script: """
+                            docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Rollback health status: ${rollbackHealth}"
+
+                    if (rollbackHealth != 'healthy') {
+                        error('Manual rollback health check failed.')
+                    }
+
+                    echo 'Manual rollback completed successfully.'
+                }
+            }
+        }
+
+        stage('Deployment Verification') {
+            steps {
+                script {
+
+                    echo '=========================================='
+                    echo 'FINAL DEPLOYMENT STATE'
+                    echo '=========================================='
+
+                    bat '''
+                        echo.
+                        echo Docker Containers:
+                        docker ps -a
+
+                        echo.
+                        echo Docker Images:
+                        docker images retail-app
+
+                        echo.
+                        echo Production Container Image:
+                        docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
+
+                        echo.
+                        echo Production Health:
+                        docker inspect retail-app-production --format="{{.State.Health.Status}}" 2>nul
+                    '''
+
+                    echo '=========================================='
+                }
+            }
+        }
     }
 
-    always {
+    post {
 
-        echo "=============================================="
-        echo "             FINAL DOCKER STATE"
-        echo "=============================================="
+        success {
 
-        bat "docker ps -a"
+            echo '=========================================='
+            echo 'JENKINS BUILD SUCCESS'
+            echo '=========================================='
 
-        echo "Jenkins pipeline completed."
+            echo "Deployment Action: ${params.DEPLOYMENT_ACTION}"
+            echo "Environment: ${params.ENVIRONMENT}"
+            echo "Version: ${params.VERSION}"
+
+            echo 'Deployment completed successfully.'
+        }
+
+        failure {
+
+            echo '=========================================='
+            echo 'JENKINS BUILD FAILURE'
+            echo '=========================================='
+
+            echo "Deployment Action: ${params.DEPLOYMENT_ACTION}"
+            echo "Environment: ${params.ENVIRONMENT}"
+            echo "Requested Version: ${params.VERSION}"
+
+            script {
+
+                /*
+                 * AUTOMATIC ROLLBACK
+                 *
+                 * This executes when a deployment fails.
+                 *
+                 * For the mandatory 4.2.2 failure test:
+                 *
+                 * Build 4.2.2
+                 *       ↓
+                 * Start 4.2.2
+                 *       ↓
+                 * Health check FAIL
+                 *       ↓
+                 * Remove 4.2.2
+                 *       ↓
+                 * Restore 4.2.1
+                 *       ↓
+                 * Health check 4.2.1
+                 *       ↓
+                 * Rollback verified
+                 *       ↓
+                 * Jenkins remains FAILURE
+                 */
+
+                if (
+                    params.DEPLOYMENT_ACTION == 'DEPLOY' &&
+                    params.ENVIRONMENT == 'PRODUCTION'
+                ) {
+
+                    echo '=========================================='
+                    echo 'AUTOMATIC ROLLBACK STARTED'
+                    echo '=========================================='
+
+                    bat """
+                        echo Removing failed/new deployment container...
+                        docker rm -f ${env.NEW_CONTAINER} 2>nul
+                    """
+
+                    /*
+                     * If production had a previous version,
+                     * restore it.
+                     */
+                    if (env.PREVIOUS_IMAGE?.trim()) {
+
+                        echo "Previous production image: ${env.PREVIOUS_IMAGE}"
+                        echo "Previous production version: ${env.PREVIOUS_VERSION}"
+
+                        bat """
+                            echo Removing failed production container...
+                            docker rm -f ${env.PROD_CONTAINER} 2>nul
+                        """
+
+                        bat """
+                            echo Restoring previous production image...
+                            docker run -d ^
+                                --name ${env.PROD_CONTAINER} ^
+                                --network ${env.NETWORK_NAME} ^
+                                -p ${env.PROD_PORT}:8081 ^
+                                -e APP_VERSION=${env.PREVIOUS_VERSION} ^
+                                -e PAYMENT_STATUS=FIXED ^
+                                -e FAIL_HEALTHCHECK=false ^
+                                --restart unless-stopped ^
+                                ${env.PREVIOUS_IMAGE}
+                        """
+
+                        echo 'Waiting for restored version health check...'
+
+                        bat """
+                            "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        """
+
+                        def restoredHealth = bat(
+                            script: """
+                                docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        echo "Restored production health: ${restoredHealth}"
+
+                        bat """
+                            docker ps -a --filter "name=${env.PROD_CONTAINER}"
+                        """
+
+                        if (restoredHealth == 'healthy') {
+
+                            echo '=========================================='
+                            echo 'ROLLBACK VERIFIED SUCCESSFULLY'
+                            echo "Restored Version: ${env.PREVIOUS_VERSION}"
+                            echo 'Production Status: HEALTHY'
+                            echo '=========================================='
+
+                        } else {
+
+                            echo '=========================================='
+                            echo 'ROLLBACK VERIFICATION FAILED'
+                            echo 'Production is not healthy.'
+                            echo '=========================================='
+                        }
+
+                    } else {
+
+                        echo '=========================================='
+                        echo 'NO PREVIOUS PRODUCTION VERSION FOUND'
+                        echo 'Rollback restoration skipped.'
+                        echo 'This was likely an initial deployment.'
+                        echo '=========================================='
+                    }
+
+                    echo '=========================================='
+                    echo 'AUTOMATIC ROLLBACK PROCESS FINISHED'
+                    echo 'JENKINS BUILD WILL REMAIN FAILURE'
+                    echo '=========================================='
+                }
+            }
+        }
+
+        always {
+
+            echo '=========================================='
+            echo 'FINAL DOCKER STATE'
+            echo '=========================================='
+
+            bat '''
+                echo.
+                echo Containers:
+                docker ps -a
+
+                echo.
+                echo Retail images:
+                docker images retail-app
+
+                echo.
+                echo Production image:
+                docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
+
+                echo.
+                echo Production health:
+                docker inspect retail-app-production --format="{{.State.Health.Status}}" 2>nul
+            '''
+
+            echo '=========================================='
+            echo 'PIPELINE EXECUTION FINISHED'
+            echo '=========================================='
+        }
     }
-}
-
-
 }
