@@ -94,7 +94,7 @@ pipeline {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps {
 				script {
-					def imageOutput = bat(script: '@docker inspect %APP_CONTAINER% --format="{{.Config.Image}}" 2>nul', returnStdout: true).trim()
+					def imageOutput = bat(script: '@docker inspect %APP_CONTAINER% --format="{{.Config.Image}}" 2>nul || exit /b 0', returnStdout: true).trim()
 					def imageLines = imageOutput.readLines().findAll { it.trim() }
 					env.PREVIOUS_IMAGE = imageLines ? imageLines.last().trim() : ''
 					if (env.PREVIOUS_IMAGE && env.PREVIOUS_IMAGE.contains(':')) {
@@ -112,7 +112,7 @@ pipeline {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps {
 				script {
-					def imageOutput = bat(script: '@docker inspect %APP_CONTAINER% --format="{{.Config.Image}}" 2>nul', returnStdout: true).trim()
+					def imageOutput = bat(script: '@docker inspect %APP_CONTAINER% --format="{{.Config.Image}}" 2>nul || exit /b 0', returnStdout: true).trim()
 					def imageLines = imageOutput.readLines().findAll { it.trim() }
 					env.PREVIOUS_IMAGE = imageLines ? imageLines.last().trim() : ''
 					if (env.PREVIOUS_IMAGE && env.PREVIOUS_IMAGE.contains(':')) {
