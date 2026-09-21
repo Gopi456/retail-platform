@@ -52,8 +52,8 @@ pipeline {
 
 		stage('Validate version') {
 			steps {
-				bat 'git rev-parse --verify refs/tags/%VERSION%'
-				script { env.GIT_SHA = bat(script: 'git rev-parse HEAD', returnStdout: true).trim() }
+				bat 'git rev-parse --verify refs/tags/v%VERSION%'
+				script { env.GIT_SHA = bat(script: 'git rev-list -n 1 v%VERSION%', returnStdout: true).trim() }
 				echo "Selected Git commit: ${env.GIT_SHA}"
 			}
 		}
@@ -77,20 +77,6 @@ pipeline {
 			}
 		}
 
-		stage('Start candidate') {
-			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
-			steps {
-				script {
-					env.CANDIDATE = "${env.APP_CONTAINER}-candidate"
-					env.CANDIDATE_PORT = "${Integer.parseInt(env.APP_PORT) + 100}"
-					bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
-					withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${params.VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "DB_HOST=${env.DB_CONTAINER}", "FAIL_HEALTHCHECK=${env.FAIL_HEALTHCHECK}"]) {
-						bat 'docker run -d --name %CANDIDATE% --network %APP_NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%APP_VERSION% -e APP_ENVIRONMENT=%APP_ENVIRONMENT% -e DB_HOST=%DB_HOST% -e DB_PASSWORD=%DB_PASSWORD% -e DB_NAME=retaildb -e DB_USER=retailuser -e FAIL_HEALTHCHECK=%FAIL_HEALTHCHECK% retail-app:%VERSION%'
-					}
-				}
-			}
-		}
-
 		stage('Record current image') {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps {
@@ -102,6 +88,36 @@ pipeline {
 					} else {
 						env.PREVIOUS_IMAGE = ''
 						echo 'No previous image found; this is an initial deployment.'
+					}
+				}
+			}
+		}
+
+		stage('Capture rollback state') {
+			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
+			steps {
+				script {
+					env.PREVIOUS_IMAGE = bat(script: 'docker inspect %APP_CONTAINER% --format="{{.Config.Image}}" 2>nul', returnStdout: true).trim()
+					if (env.PREVIOUS_IMAGE && env.PREVIOUS_IMAGE.contains(':')) {
+						env.PREVIOUS_VERSION = env.PREVIOUS_IMAGE.tokenize(':').last()
+						echo "Previous image captured: ${env.PREVIOUS_IMAGE}"
+					} else {
+						env.PREVIOUS_IMAGE = ''
+						echo 'No previous image found; this is an initial deployment.'
+					}
+				}
+			}
+		}
+
+		stage('Start candidate') {
+			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
+			steps {
+				script {
+					env.CANDIDATE = "${env.APP_CONTAINER}-candidate"
+					env.CANDIDATE_PORT = "${Integer.parseInt(env.APP_PORT) + 100}"
+					bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+					withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${params.VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "DB_HOST=${env.DB_CONTAINER}", "FAIL_HEALTHCHECK=${env.FAIL_HEALTHCHECK}"]) {
+						bat 'docker run -d --name %CANDIDATE% --network %APP_NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%APP_VERSION% -e APP_ENVIRONMENT=%APP_ENVIRONMENT% -e DB_HOST=%DB_HOST% -e DB_PASSWORD=%DB_PASSWORD% -e DB_NAME=retaildb -e DB_USER=retailuser -e FAIL_HEALTHCHECK=%FAIL_HEALTHCHECK% retail-app:%VERSION%'
 					}
 				}
 			}
@@ -156,6 +172,7 @@ pipeline {
 						withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${env.PREVIOUS_VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "DB_HOST=${env.DB_CONTAINER}"]) {
 							bat 'docker run -d --name %APP_CONTAINER% --network %APP_NETWORK% -p %APP_PORT%:8081 -e APP_VERSION=%APP_VERSION% -e APP_ENVIRONMENT=%APP_ENVIRONMENT% -e DB_HOST=%DB_HOST% -e DB_PASSWORD=%DB_PASSWORD% -e DB_NAME=retaildb -e DB_USER=retailuser %PREVIOUS_IMAGE%'
 						}
+						bat 'powershell -NoProfile -Command "for($i=0; $i -lt 12; $i++){ try {$r=Invoke-WebRequest -UseBasicParsing http://localhost:%APP_PORT%/health; if($r.StatusCode -eq 200){exit 0}} catch {}; Start-Sleep -Seconds 5 }; exit 1"'
 						echo "Candidate removed; previous image restored: ${env.PREVIOUS_IMAGE}"
 					} else {
 						echo 'Candidate removed; no previous image existed to restore.'
@@ -164,7 +181,8 @@ pipeline {
 			}
 		}
 		always {
-			bat 'docker images retail-app; docker ps -a'
+			bat 'docker images retail-app'
+			bat 'docker ps -a'
 			echo "Final state: ${currentBuild.currentResult}; version=${params.VERSION}; commit=${env.GIT_SHA ?: 'unknown'}"
 		}
 	}
