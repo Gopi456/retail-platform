@@ -25,6 +25,30 @@ $env:APP_PORT = '18081'
 
 ## Start the application locally
 
+The repeatable setup is automated by `scripts\start-demo.ps1`. It prompts for the database password without displaying it, builds the image, starts PostgreSQL and the app, waits for `/health`, and prints the browser URLs:
+
+```powershell
+.\scripts\start-demo.ps1 -Version 4.2.1 -Environment DEV -Port 18081
+```
+
+To reset the disposable demo database first:
+
+```powershell
+.\scripts\start-demo.ps1 -Version 4.2.1 -Environment DEV -Port 18081 -ResetDatabase
+```
+
+Stop the stack while preserving the database volume:
+
+```powershell
+.\scripts\stop-demo.ps1
+```
+
+Stop it and delete the disposable database volume:
+
+```powershell
+.\scripts\stop-demo.ps1 -DeleteDatabase
+```
+
 Run these commands from the repository root in PowerShell. The password is supplied through the shell and is not committed to Git:
 
 ```powershell
