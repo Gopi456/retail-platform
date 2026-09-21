@@ -13,19 +13,19 @@ pipeline {
         choice(
             name: 'ENVIRONMENT',
             choices: ['UAT', 'PRODUCTION'],
-            description: 'Target deployment environment'
+            description: 'Target environment'
         )
 
         string(
             name: 'VERSION',
             defaultValue: '4.2.1',
-            description: 'Application version/tag to deploy, for example 4.2.1'
+            description: 'Application version to deploy'
         )
 
         choice(
             name: 'CONFIRM_PROD',
             choices: ['NO', 'YES'],
-            description: 'Production deployment confirmation'
+            description: 'Required confirmation for production deployment'
         )
     }
 
@@ -44,7 +44,6 @@ pipeline {
 
         PREVIOUS_IMAGE = ''
         PREVIOUS_VERSION = ''
-        FAIL_HEALTH = 'false'
     }
 
     stages {
@@ -72,10 +71,11 @@ pipeline {
                         error('VERSION cannot be empty.')
                     }
 
-                    if (params.ENVIRONMENT == 'PRODUCTION' &&
+                    if (
+                        params.ENVIRONMENT == 'PRODUCTION' &&
                         params.DEPLOYMENT_ACTION == 'DEPLOY' &&
-                        params.CONFIRM_PROD != 'YES') {
-
+                        params.CONFIRM_PROD != 'YES'
+                    ) {
                         error(
                             'Production deployment blocked. CONFIRM_PROD must be YES.'
                         )
@@ -100,23 +100,22 @@ pipeline {
 
                     echo "Checking Git tag: ${tagName}"
 
-                    def tagExists = bat(
+                    def tagStatus = bat(
                         script: """
-                            git rev-parse --verify refs/tags/${tagName} >nul 2>&1
+                            @git rev-parse --verify refs/tags/${tagName} >nul 2>&1
                         """,
                         returnStatus: true
                     )
 
-                    if (tagExists != 0) {
+                    if (tagStatus != 0) {
                         error(
-                            "Git tag ${tagName} does not exist. " +
-                            "Create and push the tag before deployment."
+                            "Git tag ${tagName} does not exist."
                         )
                     }
 
                     def commitId = bat(
                         script: """
-                            git rev-list -n 1 ${tagName}
+                            @git rev-list -n 1 ${tagName}
                         """,
                         returnStdout: true
                     ).trim()
@@ -132,20 +131,16 @@ pipeline {
         stage('Verify Workspace') {
             steps {
                 bat '''
-                    echo Current workspace:
-                    cd
+                    @echo Current workspace:
+                    @cd
 
-                    echo.
-                    echo Git branch:
-                    git branch --show-current
+                    @echo.
+                    @echo Latest commits:
+                    @git log --oneline -5
 
-                    echo.
-                    echo Latest commits:
-                    git log --oneline -5
-
-                    echo.
-                    echo Repository files:
-                    dir
+                    @echo.
+                    @echo Repository files:
+                    @dir
                 '''
             }
         }
@@ -160,19 +155,16 @@ pipeline {
             steps {
                 script {
 
-                    echo "Building Docker image:"
-                    echo "${env.APP_NAME}:${params.VERSION}"
+                    echo "Building Docker image ${env.APP_NAME}:${params.VERSION}"
 
                     bat """
-                        docker build ^
-                            -t ${env.APP_NAME}:${params.VERSION} ^
-                            .
+                        @docker build -t ${env.APP_NAME}:${params.VERSION} .
                     """
 
                     echo "Docker image ${env.APP_NAME}:${params.VERSION} built successfully."
 
                     bat """
-                        docker images ${env.APP_NAME}
+                        @docker images ${env.APP_NAME}
                     """
                 }
             }
@@ -181,17 +173,14 @@ pipeline {
         stage('Prepare Docker Network') {
             steps {
                 bat '''
-                    docker network inspect retail-network >nul 2>&1
+                    @docker network inspect retail-network >nul 2>&1
 
-                    if errorlevel 1 (
+                    @if errorlevel 1 (
                         echo Creating Docker network retail-network...
                         docker network create retail-network
                     ) else (
                         echo Docker network retail-network already exists.
                     )
-
-                    echo.
-                    docker network inspect retail-network
                 '''
             }
         }
@@ -207,18 +196,22 @@ pipeline {
             steps {
                 script {
 
-                    def existingContainer = bat(
-                        script: """
-                            docker ps -a --filter "name=^${env.PROD_CONTAINER}\$" --format "{{.Names}}"
-                        """,
-                        returnStdout: true
-                    ).trim()
+                    echo 'Checking existing production container...'
 
-                    if (existingContainer == env.PROD_CONTAINER) {
+                    def productionExists = bat(
+                        script: """
+                            @docker inspect ${env.PROD_CONTAINER} >nul 2>&1
+                        """,
+                        returnStatus: true
+                    )
+
+                    if (productionExists == 0) {
+
+                        echo 'Existing production container found.'
 
                         def previousImage = bat(
                             script: """
-                                docker inspect ${env.PROD_CONTAINER} --format="{{.Config.Image}}"
+                                @docker inspect ${env.PROD_CONTAINER} --format="{{.Config.Image}}"
                             """,
                             returnStdout: true
                         ).trim()
@@ -227,12 +220,14 @@ pipeline {
 
                         echo "Previous production image: ${env.PREVIOUS_IMAGE}"
 
-                        def previousVersion = previousImage.replace(
-                            "${env.APP_NAME}:",
-                            ''
-                        )
-
-                        env.PREVIOUS_VERSION = previousVersion
+                        if (previousImage.contains(':')) {
+                            env.PREVIOUS_VERSION =
+                                previousImage.substring(
+                                    previousImage.lastIndexOf(':') + 1
+                                )
+                        } else {
+                            env.PREVIOUS_VERSION = ''
+                        }
 
                         echo "Previous production version: ${env.PREVIOUS_VERSION}"
 
@@ -259,43 +254,62 @@ pipeline {
                 script {
 
                     /*
-                     * FAILURE INJECTION
+                     * Mandatory failure injection.
                      *
-                     * Version 4.2.2 is intentionally configured
-                     * to fail its Docker health check.
+                     * 4.2.2 intentionally receives:
+                     * FAIL_HEALTHCHECK=true
                      *
-                     * All other versions start normally.
+                     * Every other version receives:
+                     * FAIL_HEALTHCHECK=false
                      */
+
                     if (params.VERSION == '4.2.2') {
-                        env.FAIL_HEALTH = 'true'
 
                         echo '=========================================='
                         echo 'FAILURE INJECTION ENABLED'
+                        echo '=========================================='
                         echo 'Version: 4.2.2'
                         echo 'FAIL_HEALTHCHECK=true'
-                        echo 'Expected result: health check failure'
+                        echo 'Expected health status: unhealthy'
                         echo '=========================================='
 
+                        bat """
+                            @docker rm -f ${env.NEW_CONTAINER} 2>nul
+
+                            @docker run -d ^
+                                --name ${env.NEW_CONTAINER} ^
+                                --network ${env.NETWORK_NAME} ^
+                                -p ${env.NEW_PORT}:8081 ^
+                                -e APP_VERSION=${params.VERSION} ^
+                                -e PAYMENT_STATUS=FIXED ^
+                                -e FAIL_HEALTHCHECK=true ^
+                                --restart unless-stopped ^
+                                ${env.APP_NAME}:${params.VERSION}
+                        """
+
                     } else {
-                        env.FAIL_HEALTH = 'false'
 
-                        echo "Normal deployment."
-                        echo "FAIL_HEALTHCHECK=false"
+                        echo '=========================================='
+                        echo 'NORMAL DEPLOYMENT'
+                        echo '=========================================='
+                        echo "Version: ${params.VERSION}"
+                        echo 'FAIL_HEALTHCHECK=false'
+                        echo '=========================================='
+
+                        bat """
+                            @docker rm -f ${env.NEW_CONTAINER} 2>nul
+
+                            @docker run -d ^
+                                --name ${env.NEW_CONTAINER} ^
+                                --network ${env.NETWORK_NAME} ^
+                                -p ${env.NEW_PORT}:8081 ^
+                                -e APP_VERSION=${params.VERSION} ^
+                                -e PAYMENT_STATUS=FIXED ^
+                                -e FAIL_HEALTHCHECK=false ^
+                                --restart unless-stopped ^
+                                ${env.APP_NAME}:${params.VERSION}
+                        """
                     }
-
-                    bat """
-                        docker rm -f ${env.NEW_CONTAINER} 2>nul
-
-                        docker run -d ^
-                            --name ${env.NEW_CONTAINER} ^
-                            --network ${env.NETWORK_NAME} ^
-                            -p ${env.NEW_PORT}:8081 ^
-                            -e APP_VERSION=${params.VERSION} ^
-                            -e PAYMENT_STATUS=FIXED ^
-                            -e FAIL_HEALTHCHECK=${env.FAIL_HEALTH} ^
-                            --restart unless-stopped ^
-                            ${env.APP_NAME}:${params.VERSION}
-                    """
 
                     echo "New version started on temporary port ${env.NEW_PORT}."
                     echo "Container: ${env.NEW_CONTAINER}"
@@ -317,12 +331,12 @@ pipeline {
                     echo 'Waiting for Docker health check...'
 
                     bat """
-                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
                     """
 
                     def healthStatus = bat(
                         script: """
-                            docker inspect ${env.NEW_CONTAINER} --format="{{.State.Health.Status}}"
+                            @docker inspect ${env.NEW_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
                     ).trim()
@@ -330,13 +344,14 @@ pipeline {
                     echo "New version health status: ${healthStatus}"
 
                     bat """
-                        docker ps -a --filter "name=${env.NEW_CONTAINER}"
+                        @docker ps -a --filter "name=${env.NEW_CONTAINER}"
                     """
 
                     if (healthStatus != 'healthy') {
 
                         echo '=========================================='
                         echo 'NEW VERSION HEALTH CHECK FAILED'
+                        echo '=========================================='
                         echo "Version: ${params.VERSION}"
                         echo "Health : ${healthStatus}"
                         echo 'Automatic rollback will be triggered.'
@@ -366,9 +381,9 @@ pipeline {
                     echo 'Deploying new version to UAT...'
 
                     bat """
-                        docker rm -f ${env.UAT_CONTAINER} 2>nul
+                        @docker rm -f ${env.UAT_CONTAINER} 2>nul
 
-                        docker run -d ^
+                        @docker run -d ^
                             --name ${env.UAT_CONTAINER} ^
                             --network ${env.NETWORK_NAME} ^
                             -p ${env.UAT_PORT}:8081 ^
@@ -382,12 +397,12 @@ pipeline {
                     echo 'Waiting for UAT health check...'
 
                     bat """
-                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
                     """
 
                     def uatHealth = bat(
                         script: """
-                            docker inspect ${env.UAT_CONTAINER} --format="{{.State.Health.Status}}"
+                            @docker inspect ${env.UAT_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
                     ).trim()
@@ -418,22 +433,17 @@ pipeline {
                     echo 'PROMOTING VERSION TO PRODUCTION'
                     echo '=========================================='
 
-                    /*
-                     * The new version has already been started
-                     * and health-checked on port 8082.
-                     *
-                     * Only after successful validation do we
-                     * replace the production container.
-                     */
+                    echo "Validated image: ${env.APP_NAME}:${params.VERSION}"
+                    echo 'New version was healthy before promotion.'
 
                     bat """
-                        docker rm -f ${env.PROD_CONTAINER} 2>nul
+                        @docker rm -f ${env.PROD_CONTAINER} 2>nul
                     """
 
                     echo 'Old production container removed.'
 
                     bat """
-                        docker run -d ^
+                        @docker run -d ^
                             --name ${env.PROD_CONTAINER} ^
                             --network ${env.NETWORK_NAME} ^
                             -p ${env.PROD_PORT}:8081 ^
@@ -463,12 +473,12 @@ pipeline {
                     echo 'Waiting for final production health check...'
 
                     bat """
-                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
                     """
 
                     def productionHealth = bat(
                         script: """
-                            docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
+                            @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
                     ).trim()
@@ -479,7 +489,6 @@ pipeline {
 
                         echo '=========================================='
                         echo 'PRODUCTION HEALTH CHECK FAILED'
-                        echo 'Automatic rollback required.'
                         echo '=========================================='
 
                         error(
@@ -511,7 +520,7 @@ pipeline {
 
                     def imageExists = bat(
                         script: """
-                            docker image inspect ${env.APP_NAME}:${params.VERSION} >nul 2>&1
+                            @docker image inspect ${env.APP_NAME}:${params.VERSION} >nul 2>&1
                         """,
                         returnStatus: true
                     )
@@ -523,9 +532,9 @@ pipeline {
                     }
 
                     bat """
-                        docker rm -f ${env.PROD_CONTAINER} 2>nul
+                        @docker rm -f ${env.PROD_CONTAINER} 2>nul
 
-                        docker run -d ^
+                        @docker run -d ^
                             --name ${env.PROD_CONTAINER} ^
                             --network ${env.NETWORK_NAME} ^
                             -p ${env.PROD_PORT}:8081 ^
@@ -537,12 +546,12 @@ pipeline {
                     """
 
                     bat """
-                        "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
                     """
 
                     def rollbackHealth = bat(
                         script: """
-                            docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
+                            @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
                     ).trim()
@@ -567,21 +576,20 @@ pipeline {
                     echo '=========================================='
 
                     bat '''
-                        echo.
-                        echo Docker Containers:
-                        docker ps -a
+                        @echo Containers:
+                        @docker ps -a
 
-                        echo.
-                        echo Docker Images:
-                        docker images retail-app
+                        @echo.
+                        @echo Retail images:
+                        @docker images retail-app
 
-                        echo.
-                        echo Production Container Image:
-                        docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
+                        @echo.
+                        @echo Production image:
+                        @docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
 
-                        echo.
-                        echo Production Health:
-                        docker inspect retail-app-production --format="{{.State.Health.Status}}" 2>nul
+                        @echo.
+                        @echo Production health:
+                        @docker inspect retail-app-production --format="{{.State.Health.Status}}" 2>nul
                     '''
 
                     echo '=========================================='
@@ -617,30 +625,6 @@ pipeline {
 
             script {
 
-                /*
-                 * AUTOMATIC ROLLBACK
-                 *
-                 * This executes when a deployment fails.
-                 *
-                 * For the mandatory 4.2.2 failure test:
-                 *
-                 * Build 4.2.2
-                 *       ↓
-                 * Start 4.2.2
-                 *       ↓
-                 * Health check FAIL
-                 *       ↓
-                 * Remove 4.2.2
-                 *       ↓
-                 * Restore 4.2.1
-                 *       ↓
-                 * Health check 4.2.1
-                 *       ↓
-                 * Rollback verified
-                 *       ↓
-                 * Jenkins remains FAILURE
-                 */
-
                 if (
                     params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                     params.ENVIRONMENT == 'PRODUCTION'
@@ -650,28 +634,35 @@ pipeline {
                     echo 'AUTOMATIC ROLLBACK STARTED'
                     echo '=========================================='
 
+                    /*
+                     * Remove failed temporary container.
+                     */
+
                     bat """
-                        echo Removing failed/new deployment container...
-                        docker rm -f ${env.NEW_CONTAINER} 2>nul
+                        @echo Removing failed/new deployment container...
+                        @docker rm -f ${env.NEW_CONTAINER} 2>nul
                     """
 
                     /*
-                     * If production had a previous version,
-                     * restore it.
+                     * Restore previous production version.
                      */
+
                     if (env.PREVIOUS_IMAGE?.trim()) {
 
-                        echo "Previous production image: ${env.PREVIOUS_IMAGE}"
-                        echo "Previous production version: ${env.PREVIOUS_VERSION}"
+                        echo 'Previous production version found.'
+                        echo "Previous image: ${env.PREVIOUS_IMAGE}"
+                        echo "Previous version: ${env.PREVIOUS_VERSION}"
+
+                        echo 'Stopping failed production container...'
 
                         bat """
-                            echo Removing failed production container...
-                            docker rm -f ${env.PROD_CONTAINER} 2>nul
+                            @docker rm -f ${env.PROD_CONTAINER} 2>nul
                         """
 
+                        echo 'Restoring previous production version...'
+
                         bat """
-                            echo Restoring previous production image...
-                            docker run -d ^
+                            @docker run -d ^
                                 --name ${env.PROD_CONTAINER} ^
                                 --network ${env.NETWORK_NAME} ^
                                 -p ${env.PROD_PORT}:8081 ^
@@ -685,44 +676,39 @@ pipeline {
                         echo 'Waiting for restored version health check...'
 
                         bat """
-                            "C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                            @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
                         """
 
                         def restoredHealth = bat(
                             script: """
-                                docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
+                                @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
                             """,
                             returnStdout: true
                         ).trim()
 
                         echo "Restored production health: ${restoredHealth}"
 
-                        bat """
-                            docker ps -a --filter "name=${env.PROD_CONTAINER}"
-                        """
+                        echo '=========================================='
 
                         if (restoredHealth == 'healthy') {
 
-                            echo '=========================================='
                             echo 'ROLLBACK VERIFIED SUCCESSFULLY'
                             echo "Restored Version: ${env.PREVIOUS_VERSION}"
                             echo 'Production Status: HEALTHY'
-                            echo '=========================================='
 
                         } else {
 
-                            echo '=========================================='
                             echo 'ROLLBACK VERIFICATION FAILED'
-                            echo 'Production is not healthy.'
-                            echo '=========================================='
+                            echo "Production Health: ${restoredHealth}"
                         }
+
+                        echo '=========================================='
 
                     } else {
 
                         echo '=========================================='
                         echo 'NO PREVIOUS PRODUCTION VERSION FOUND'
                         echo 'Rollback restoration skipped.'
-                        echo 'This was likely an initial deployment.'
                         echo '=========================================='
                     }
 
@@ -741,21 +727,21 @@ pipeline {
             echo '=========================================='
 
             bat '''
-                echo.
-                echo Containers:
-                docker ps -a
+                @echo.
+                @echo Containers:
+                @docker ps -a
 
-                echo.
-                echo Retail images:
-                docker images retail-app
+                @echo.
+                @echo Retail images:
+                @docker images retail-app
 
-                echo.
-                echo Production image:
-                docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
+                @echo.
+                @echo Production image:
+                @docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
 
-                echo.
-                echo Production health:
-                docker inspect retail-app-production --format="{{.State.Health.Status}}" 2>nul
+                @echo.
+                @echo Production health:
+                @docker inspect retail-app-production --format="{{.State.Health.Status}}" 2>nul
             '''
 
             echo '=========================================='
