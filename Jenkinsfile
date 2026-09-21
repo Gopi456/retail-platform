@@ -61,6 +61,13 @@ pipeline {
 			}
 		}
 
+		stage('Prepare Python environment') {
+			when { expression { params.RUN_TESTS == 'YES' } }
+			steps {
+				bat '@if not exist venv\\Scripts\\python.exe (python -m venv venv && venv\\Scripts\\python.exe -m pip install --disable-pip-version-check -r app\\requirements.txt)'
+			}
+		}
+
 		stage('Unit tests') {
 			when { expression { params.RUN_TESTS == 'YES' } }
 			steps { bat 'venv\\Scripts\\python.exe -m pytest -q' }
@@ -77,13 +84,6 @@ pipeline {
 				withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${params.VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "APP_CONTAINER=${env.APP_CONTAINER}", "DB_CONTAINER=${env.DB_CONTAINER}", "APP_NETWORK=${env.APP_NETWORK}", "APP_PORT=${env.APP_PORT}", "DB_VOLUME=${env.DB_VOLUME}"]) {
 					bat 'docker compose up -d db'
 				}
-			}
-		}
-
-		stage('Prepare Python environment') {
-			when { expression { params.RUN_TESTS == 'YES' } }
-			steps {
-				bat '@if not exist venv\\Scripts\\python.exe (python -m venv venv && venv\\Scripts\\python.exe -m pip install --disable-pip-version-check -r app\\requirements.txt)'
 			}
 		}
 
