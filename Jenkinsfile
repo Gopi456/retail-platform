@@ -61,21 +61,14 @@ pipeline {
 			}
 		}
 
-		stage('Prepare Python environment') {
-			when { expression { params.RUN_TESTS == 'YES' } }
-			steps {
-				bat '@if not exist venv\\Scripts\\python.exe (python -m venv venv && venv\\Scripts\\python.exe -m pip install --disable-pip-version-check -r app\\requirements.txt)'
-			}
-		}
-
-		stage('Unit tests') {
-			when { expression { params.RUN_TESTS == 'YES' } }
-			steps { bat 'venv\\Scripts\\python.exe -m pytest -q' }
-		}
-
 		stage('Build image') {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps { bat 'docker build --label org.opencontainers.image.revision=%GIT_SHA% -t %IMAGE_TAG% .' }
+		}
+
+		stage('Unit tests') {
+			when { expression { params.RUN_TESTS == 'YES' && params.DEPLOYMENT_ACTION == 'DEPLOY' } }
+			steps { bat 'docker run --rm %IMAGE_TAG% python -m pytest -q' }
 		}
 
 		stage('Prepare database') {
