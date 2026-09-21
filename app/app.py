@@ -1,6 +1,7 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify,request
 import os
 from app.database import get_db_connection
+from app.customers import search_customers
 
 app = Flask(__name__)
 
@@ -23,6 +24,29 @@ def home():
         </body>
     </html>
     """
+
+@app.route("/customers/search")
+def customer_search():
+    search_term = request.args.get("q", "").strip()
+
+    if not search_term:
+        return jsonify({
+            "error": "Search parameter 'q' is required"
+        }), 400
+
+    try:
+        customers = search_customers(search_term)
+
+        return jsonify({
+            "count": len(customers),
+            "customers": customers
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "error": "Customer search failed",
+            "details": str(e)
+        }), 500
 
 
 @app.route("/health")
