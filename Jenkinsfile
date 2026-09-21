@@ -68,7 +68,7 @@ pipeline {
 
 		stage('Unit tests') {
 			when { expression { params.RUN_TESTS == 'YES' && params.DEPLOYMENT_ACTION == 'DEPLOY' } }
-			steps { bat 'docker run --rm %IMAGE_TAG% python -m pytest -q' }
+			steps { bat 'docker run --rm %IMAGE_TAG% python -m pytest -q -p no:cacheprovider' }
 		}
 
 		stage('Prepare database') {
