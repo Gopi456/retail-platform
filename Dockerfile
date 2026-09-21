@@ -15,4 +15,4 @@ EXPOSE 8081
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
 	CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"
 
-CMD ["python", "-m", "app.app"]
+CMD ["python", "app.py"]
