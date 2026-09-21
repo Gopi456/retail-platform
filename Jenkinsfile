@@ -75,7 +75,9 @@ pipeline {
 			when { expression { params.DEPLOYMENT_ACTION == 'DEPLOY' } }
 			steps {
 				withEnv(["DB_PASSWORD=${DB_CREDENTIALS_PSW}", "APP_VERSION=${params.VERSION}", "APP_ENVIRONMENT=${params.ENVIRONMENT}", "APP_CONTAINER=${env.APP_CONTAINER}", "DB_CONTAINER=${env.DB_CONTAINER}", "APP_NETWORK=${env.APP_NETWORK}", "APP_PORT=${env.APP_PORT}", "DB_VOLUME=${env.DB_VOLUME}"]) {
-					bat 'docker compose up -d db'
+					bat 'docker network inspect %APP_NETWORK% >nul 2>&1 || docker network create %APP_NETWORK%'
+					bat 'docker inspect %DB_CONTAINER% >nul 2>&1 || docker run -d --name %DB_CONTAINER% --network %APP_NETWORK% -e POSTGRES_DB=retaildb -e POSTGRES_USER=retailuser -e POSTGRES_PASSWORD=%DB_PASSWORD% -v %DB_VOLUME%:/var/lib/postgresql/data postgres:16-alpine'
+					bat 'powershell -NoProfile -Command "for($i=0; $i -lt 30; $i++){ $s=docker inspect %DB_CONTAINER% --format=\"{{.State.Status}}\" 2>$null; if($s -eq \"running\"){exit 0}; Start-Sleep -Seconds 2 }; exit 1"'
 				}
 			}
 		}
