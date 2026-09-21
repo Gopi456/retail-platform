@@ -183,7 +183,12 @@ pipeline {
 				bat 'docker ps --filter name=%APP_CONTAINER% --filter name=%DB_CONTAINER%'
 				bat 'docker inspect %APP_CONTAINER% --format="image={{.Config.Image}} health={{.State.Health.Status}}"'
 				bat '''
-					for /F "delims=" %%s in ('docker inspect %APP_CONTAINER% --format="{{.State.Health.Status}}" 2^>nul') do if /I "%%s"=="healthy" exit /b 0
+					for /L %%i in (1,1,30) do (
+						for /F "delims=" %%s in ('docker inspect %APP_CONTAINER% --format="{{.State.Health.Status}}" 2^>nul') do (
+							if /I "%%s"=="healthy" exit /b 0
+						)
+						%SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
+					)
 					exit /b 1
 				'''
 			}
