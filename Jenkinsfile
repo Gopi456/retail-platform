@@ -44,14 +44,21 @@ pipeline {
 
         PREVIOUS_IMAGE = ''
         PREVIOUS_VERSION = ''
+        SELECTED_COMMIT = ''
     }
 
     stages {
 
+        // =========================================================
+        // 1. SHOW PARAMETERS
+        // =========================================================
+
         stage('Show Parameters') {
+
             steps {
+
                 echo '=========================================='
-                echo '      RETAIL PLATFORM DEPLOYMENT'
+                echo '       RETAIL PLATFORM DEPLOYMENT'
                 echo '=========================================='
 
                 echo "Deployment Action : ${params.DEPLOYMENT_ACTION}"
@@ -63,12 +70,22 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 2. VALIDATE PARAMETERS
+        // =========================================================
+
         stage('Validate Parameters') {
+
             steps {
+
                 script {
 
                     if (params.VERSION.trim() == '') {
-                        error('VERSION cannot be empty.')
+
+                        error(
+                            'VERSION cannot be empty.'
+                        )
                     }
 
                     if (
@@ -76,6 +93,7 @@ pipeline {
                         params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                         params.CONFIRM_PROD != 'YES'
                     ) {
+
                         error(
                             'Production deployment blocked. CONFIRM_PROD must be YES.'
                         )
@@ -86,17 +104,30 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 3. VALIDATE GIT TAG
+        // =========================================================
+
         stage('Validate Git Version') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY'
                 }
             }
 
             steps {
+
                 script {
 
                     def tagName = "v${params.VERSION}"
+
+                    echo '=========================================='
+                    echo 'GIT VERSION VALIDATION'
+                    echo '=========================================='
 
                     echo "Checking Git tag: ${tagName}"
 
@@ -108,28 +139,53 @@ pipeline {
                     )
 
                     if (tagStatus != 0) {
+
                         error(
                             "Git tag ${tagName} does not exist."
                         )
                     }
 
-                    def commitId = bat(
+                    def commitOutput = bat(
                         script: """
                             @git rev-list -n 1 ${tagName}
                         """,
                         returnStdout: true
-                    ).trim()
+                    )
 
-                    echo "Selected Git tag   : ${tagName}"
-                    echo "Selected Git commit: ${commitId}"
+                    def commitLines =
+                        commitOutput
+                            .readLines()
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                    if (commitLines.isEmpty()) {
+
+                        error(
+                            "Unable to determine commit for ${tagName}."
+                        )
+                    }
+
+                    def commitId = commitLines.last()
 
                     env.SELECTED_COMMIT = commitId
+
+                    echo "Selected Git tag   : ${tagName}"
+                    echo "Selected Git commit: ${env.SELECTED_COMMIT}"
+
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 4. VERIFY WORKSPACE
+        // =========================================================
+
         stage('Verify Workspace') {
+
             steps {
+
                 bat '''
                     @echo Current workspace:
                     @cd
@@ -145,17 +201,30 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 5. BUILD DOCKER IMAGE
+        // =========================================================
+
         stage('Build Docker Image') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY'
                 }
             }
 
             steps {
+
                 script {
 
-                    echo "Building Docker image ${env.APP_NAME}:${params.VERSION}"
+                    echo '=========================================='
+                    echo 'DOCKER IMAGE BUILD'
+                    echo '=========================================='
+
+                    echo "Building image: ${env.APP_NAME}:${params.VERSION}"
 
                     bat """
                         @docker build -t ${env.APP_NAME}:${params.VERSION} .
@@ -166,12 +235,21 @@ pipeline {
                     bat """
                         @docker images ${env.APP_NAME}
                     """
+
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 6. PREPARE DOCKER NETWORK
+        // =========================================================
+
         stage('Prepare Docker Network') {
+
             steps {
+
                 bat '''
                     @docker network inspect retail-network >nul 2>&1
 
@@ -185,82 +263,122 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 7. RECORD PREVIOUS PRODUCTION
+        // =========================================================
+
         stage('Record Previous Production') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                     params.ENVIRONMENT == 'PRODUCTION'
                 }
             }
 
             steps {
+
                 script {
 
-                    echo 'Checking existing production container...'
+                    echo '=========================================='
+                    echo 'RECORDING PREVIOUS PRODUCTION VERSION'
+                    echo '=========================================='
 
-                    def productionExists = bat(
-                        script: """
-                            @docker inspect ${env.PROD_CONTAINER} >nul 2>&1
-                        """,
-                        returnStatus: true
+                    /*
+                     * Directly retrieve the image used by the
+                     * currently running production container.
+                     */
+
+                    def productionImageOutput = bat(
+                        script: '''
+                            @docker inspect retail-app-production --format="{{.Config.Image}}" 2>nul
+                        ''',
+                        returnStdout: true
                     )
 
-                    if (productionExists == 0) {
+                    def productionImageLines =
+                        productionImageOutput
+                            .readLines()
+                            .collect { it.trim() }
+                            .findAll {
+                                it &&
+                                it != 'null' &&
+                                it != 'undefined'
+                            }
 
-                        echo 'Existing production container found.'
+                    def productionImage =
+                        productionImageLines ?
+                        productionImageLines.last() :
+                        ''
 
-                        def previousImage = bat(
-                            script: """
-                                @docker inspect ${env.PROD_CONTAINER} --format="{{.Config.Image}}"
-                            """,
-                            returnStdout: true
-                        ).trim()
+                    echo "Detected production image: ${productionImage}"
 
-                        env.PREVIOUS_IMAGE = previousImage
+                    if (
+                        productionImage &&
+                        productionImage.contains('retail-app:')
+                    ) {
 
-                        echo "Previous production image: ${env.PREVIOUS_IMAGE}"
+                        env.PREVIOUS_IMAGE = productionImage
 
-                        if (previousImage.contains(':')) {
-                            env.PREVIOUS_VERSION =
-                                previousImage.substring(
-                                    previousImage.lastIndexOf(':') + 1
-                                )
-                        } else {
-                            env.PREVIOUS_VERSION = ''
-                        }
+                        env.PREVIOUS_VERSION =
+                            productionImage.substring(
+                                productionImage.lastIndexOf(':') + 1
+                            )
 
-                        echo "Previous production version: ${env.PREVIOUS_VERSION}"
+                        echo '=========================================='
+                        echo 'PREVIOUS PRODUCTION VERSION RECORDED'
+                        echo '=========================================='
+
+                        echo "Previous image  : ${env.PREVIOUS_IMAGE}"
+                        echo "Previous version: ${env.PREVIOUS_VERSION}"
+
+                        echo '=========================================='
 
                     } else {
 
                         env.PREVIOUS_IMAGE = ''
                         env.PREVIOUS_VERSION = ''
 
-                        echo 'No existing production container found.'
+                        echo '=========================================='
+                        echo 'NO PREVIOUS PRODUCTION VERSION FOUND'
+                        echo '=========================================='
+
                         echo 'This is an initial production deployment.'
                     }
                 }
             }
         }
 
+
+        // =========================================================
+        // 8. START NEW VERSION
+        // =========================================================
+
         stage('Start New Version') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY'
                 }
             }
 
             steps {
+
                 script {
 
                     /*
-                     * Mandatory failure injection.
+                     * IMPORTANT:
                      *
-                     * 4.2.2 intentionally receives:
-                     * FAIL_HEALTHCHECK=true
+                     * Version 4.2.2 is the mandatory failure-injection
+                     * version for the assessment.
                      *
-                     * Every other version receives:
-                     * FAIL_HEALTHCHECK=false
+                     * 4.2.2 -> FAIL_HEALTHCHECK=true
+                     * Other versions -> FAIL_HEALTHCHECK=false
                      */
 
                     if (params.VERSION == '4.2.2') {
@@ -268,9 +386,11 @@ pipeline {
                         echo '=========================================='
                         echo 'FAILURE INJECTION ENABLED'
                         echo '=========================================='
+
                         echo 'Version: 4.2.2'
                         echo 'FAIL_HEALTHCHECK=true'
                         echo 'Expected health status: unhealthy'
+
                         echo '=========================================='
 
                         bat """
@@ -292,8 +412,10 @@ pipeline {
                         echo '=========================================='
                         echo 'NORMAL DEPLOYMENT'
                         echo '=========================================='
+
                         echo "Version: ${params.VERSION}"
                         echo 'FAIL_HEALTHCHECK=false'
+
                         echo '=========================================='
 
                         bat """
@@ -311,35 +433,65 @@ pipeline {
                         """
                     }
 
-                    echo "New version started on temporary port ${env.NEW_PORT}."
+                    echo '=========================================='
+                    echo 'NEW VERSION STARTED'
+                    echo '=========================================='
+
                     echo "Container: ${env.NEW_CONTAINER}"
-                    echo "Image: ${env.APP_NAME}:${params.VERSION}"
+                    echo "Image    : ${env.APP_NAME}:${params.VERSION}"
+                    echo "Port     : ${env.NEW_PORT}"
+
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 9. HEALTH CHECK NEW VERSION
+        // =========================================================
+
         stage('Health Check New Version') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY'
                 }
             }
 
             steps {
+
                 script {
+
+                    echo '=========================================='
+                    echo 'HEALTH CHECK - NEW VERSION'
+                    echo '=========================================='
 
                     echo 'Waiting for Docker health check...'
 
                     bat """
-                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 20"
                     """
 
-                    def healthStatus = bat(
+                    def healthOutput = bat(
                         script: """
                             @docker inspect ${env.NEW_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
-                    ).trim()
+                    )
+
+                    def healthLines =
+                        healthOutput
+                            .readLines()
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                    def healthStatus =
+                        healthLines ?
+                        healthLines.last() :
+                        'unknown'
 
                     echo "New version health status: ${healthStatus}"
 
@@ -347,14 +499,21 @@ pipeline {
                         @docker ps -a --filter "name=${env.NEW_CONTAINER}"
                     """
 
+                    /*
+                     * Mandatory failure condition.
+                     */
+
                     if (healthStatus != 'healthy') {
 
                         echo '=========================================='
                         echo 'NEW VERSION HEALTH CHECK FAILED'
                         echo '=========================================='
+
                         echo "Version: ${params.VERSION}"
                         echo "Health : ${healthStatus}"
+
                         echo 'Automatic rollback will be triggered.'
+
                         echo '=========================================='
 
                         error(
@@ -362,23 +521,36 @@ pipeline {
                         )
                     }
 
-                    echo 'New version health check PASSED.'
+                    echo '=========================================='
+                    echo 'NEW VERSION HEALTH CHECK PASSED'
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 10. DEPLOY TO UAT
+        // =========================================================
+
         stage('Deploy to UAT') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                     params.ENVIRONMENT == 'UAT'
                 }
             }
 
             steps {
+
                 script {
 
-                    echo 'Deploying new version to UAT...'
+                    echo '=========================================='
+                    echo 'DEPLOYING TO UAT'
+                    echo '=========================================='
 
                     bat """
                         @docker rm -f ${env.UAT_CONTAINER} 2>nul
@@ -397,36 +569,61 @@ pipeline {
                     echo 'Waiting for UAT health check...'
 
                     bat """
-                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 20"
                     """
 
-                    def uatHealth = bat(
+                    def uatOutput = bat(
                         script: """
                             @docker inspect ${env.UAT_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
-                    ).trim()
+                    )
+
+                    def uatLines =
+                        uatOutput
+                            .readLines()
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                    def uatHealth =
+                        uatLines ?
+                        uatLines.last() :
+                        'unknown'
 
                     echo "UAT health status: ${uatHealth}"
 
                     if (uatHealth != 'healthy') {
-                        error('UAT deployment health check failed.')
+
+                        error(
+                            'UAT deployment health check failed.'
+                        )
                     }
 
-                    echo 'UAT deployment successful.'
+                    echo '=========================================='
+                    echo 'UAT DEPLOYMENT SUCCESSFUL'
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 11. PROMOTE TO PRODUCTION
+        // =========================================================
+
         stage('Promote to Production') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                     params.ENVIRONMENT == 'PRODUCTION'
                 }
             }
 
             steps {
+
                 script {
 
                     echo '=========================================='
@@ -436,11 +633,20 @@ pipeline {
                     echo "Validated image: ${env.APP_NAME}:${params.VERSION}"
                     echo 'New version was healthy before promotion.'
 
+                    /*
+                     * Remove old production only after the
+                     * temporary new version passed health check.
+                     */
+
                     bat """
                         @docker rm -f ${env.PROD_CONTAINER} 2>nul
                     """
 
                     echo 'Old production container removed.'
+
+                    /*
+                     * Start validated version on production port.
+                     */
 
                     bat """
                         @docker run -d ^
@@ -455,33 +661,59 @@ pipeline {
                     """
 
                     echo 'New production container started.'
+
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 12. FINAL PRODUCTION HEALTH CHECK
+        // =========================================================
+
         stage('Final Production Health Check') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                     params.ENVIRONMENT == 'PRODUCTION'
                 }
             }
 
             steps {
+
                 script {
 
-                    echo 'Waiting for final production health check...'
+                    echo '=========================================='
+                    echo 'FINAL PRODUCTION HEALTH CHECK'
+                    echo '=========================================='
+
+                    echo 'Waiting for production health check...'
 
                     bat """
-                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 20"
                     """
 
-                    def productionHealth = bat(
+                    def productionOutput = bat(
                         script: """
                             @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
-                    ).trim()
+                    )
+
+                    def productionLines =
+                        productionOutput
+                            .readLines()
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                    def productionHealth =
+                        productionLines ?
+                        productionLines.last() :
+                        'unknown'
 
                     echo "Final production health status: ${productionHealth}"
 
@@ -498,20 +730,30 @@ pipeline {
 
                     echo '=========================================='
                     echo 'PRODUCTION DEPLOYMENT HEALTHY'
-                    echo "Version: ${params.VERSION}"
                     echo '=========================================='
+
+                    echo "Production Version: ${params.VERSION}"
                 }
             }
         }
 
+
+        // =========================================================
+        // 13. MANUAL ROLLBACK
+        // =========================================================
+
         stage('Rollback Manual Action') {
+
             when {
+
                 expression {
+
                     params.DEPLOYMENT_ACTION == 'ROLLBACK'
                 }
             }
 
             steps {
+
                 script {
 
                     echo '=========================================='
@@ -526,6 +768,7 @@ pipeline {
                     )
 
                     if (imageExists != 0) {
+
                         error(
                             "Rollback image ${env.APP_NAME}:${params.VERSION} does not exist."
                         )
@@ -545,30 +788,55 @@ pipeline {
                             ${env.APP_NAME}:${params.VERSION}
                     """
 
+                    echo 'Waiting for rollback health check...'
+
                     bat """
-                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                        @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 20"
                     """
 
-                    def rollbackHealth = bat(
+                    def rollbackOutput = bat(
                         script: """
                             @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
                         """,
                         returnStdout: true
-                    ).trim()
+                    )
+
+                    def rollbackLines =
+                        rollbackOutput
+                            .readLines()
+                            .collect { it.trim() }
+                            .findAll { it }
+
+                    def rollbackHealth =
+                        rollbackLines ?
+                        rollbackLines.last() :
+                        'unknown'
 
                     echo "Rollback health status: ${rollbackHealth}"
 
                     if (rollbackHealth != 'healthy') {
-                        error('Manual rollback health check failed.')
+
+                        error(
+                            'Manual rollback health check failed.'
+                        )
                     }
 
-                    echo 'Manual rollback completed successfully.'
+                    echo '=========================================='
+                    echo 'MANUAL ROLLBACK COMPLETED'
+                    echo '=========================================='
                 }
             }
         }
 
+
+        // =========================================================
+        // 14. DEPLOYMENT VERIFICATION
+        // =========================================================
+
         stage('Deployment Verification') {
+
             steps {
+
                 script {
 
                     echo '=========================================='
@@ -576,6 +844,7 @@ pipeline {
                     echo '=========================================='
 
                     bat '''
+                        @echo.
                         @echo Containers:
                         @docker ps -a
 
@@ -598,7 +867,16 @@ pipeline {
         }
     }
 
+
+    // =============================================================
+    // POST ACTIONS
+    // =============================================================
+
     post {
+
+        // =========================================================
+        // SUCCESS
+        // =========================================================
 
         success {
 
@@ -607,11 +885,18 @@ pipeline {
             echo '=========================================='
 
             echo "Deployment Action: ${params.DEPLOYMENT_ACTION}"
-            echo "Environment: ${params.ENVIRONMENT}"
-            echo "Version: ${params.VERSION}"
+            echo "Environment      : ${params.ENVIRONMENT}"
+            echo "Version          : ${params.VERSION}"
 
             echo 'Deployment completed successfully.'
+
+            echo '=========================================='
         }
+
+
+        // =========================================================
+        // FAILURE + AUTOMATIC ROLLBACK
+        // =========================================================
 
         failure {
 
@@ -620,10 +905,22 @@ pipeline {
             echo '=========================================='
 
             echo "Deployment Action: ${params.DEPLOYMENT_ACTION}"
-            echo "Environment: ${params.ENVIRONMENT}"
+            echo "Environment      : ${params.ENVIRONMENT}"
             echo "Requested Version: ${params.VERSION}"
 
+            echo '=========================================='
+
             script {
+
+                /*
+                 * Automatic rollback is required only when:
+                 *
+                 * DEPLOYMENT_ACTION = DEPLOY
+                 * ENVIRONMENT = PRODUCTION
+                 *
+                 * This is exactly what happens when 4.2.2
+                 * fails its health check.
+                 */
 
                 if (
                     params.DEPLOYMENT_ACTION == 'DEPLOY' &&
@@ -635,31 +932,59 @@ pipeline {
                     echo '=========================================='
 
                     /*
+                     * STEP 1
                      * Remove failed temporary container.
                      */
 
+                    echo 'Step 1: Removing failed/new deployment container...'
+
                     bat """
-                        @echo Removing failed/new deployment container...
                         @docker rm -f ${env.NEW_CONTAINER} 2>nul
                     """
 
+                    echo 'Failed/new deployment container removed.'
+
+
                     /*
-                     * Restore previous production version.
+                     * STEP 2
+                     * Check whether previous production
+                     * version was successfully recorded.
                      */
 
-                    if (env.PREVIOUS_IMAGE?.trim()) {
+                    echo 'Step 2: Checking previous production version...'
 
-                        echo 'Previous production version found.'
-                        echo "Previous image: ${env.PREVIOUS_IMAGE}"
-                        echo "Previous version: ${env.PREVIOUS_VERSION}"
+                    echo "Previous image  : ${env.PREVIOUS_IMAGE}"
+                    echo "Previous version: ${env.PREVIOUS_VERSION}"
 
-                        echo 'Stopping failed production container...'
+
+                    if (
+                        env.PREVIOUS_IMAGE?.trim() &&
+                        env.PREVIOUS_VERSION?.trim()
+                    ) {
+
+                        /*
+                         * STEP 3
+                         * Stop/remove failed production container.
+                         */
+
+                        echo 'Step 3: Removing failed production container...'
 
                         bat """
                             @docker rm -f ${env.PROD_CONTAINER} 2>nul
                         """
 
-                        echo 'Restoring previous production version...'
+                        echo 'Failed production container removed.'
+
+
+                        /*
+                         * STEP 4
+                         * Restore previous production image.
+                         */
+
+                        echo 'Step 4: Restoring previous production version...'
+
+                        echo "Restoring image: ${env.PREVIOUS_IMAGE}"
+                        echo "Restoring version: ${env.PREVIOUS_VERSION}"
 
                         bat """
                             @docker run -d ^
@@ -673,52 +998,123 @@ pipeline {
                                 ${env.PREVIOUS_IMAGE}
                         """
 
-                        echo 'Waiting for restored version health check...'
+                        echo 'Previous production version started.'
+
+
+                        /*
+                         * STEP 5
+                         * Verify restored version.
+                         */
+
+                        echo 'Step 5: Verifying restored production health...'
 
                         bat """
-                            @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 15"
+                            @"C:\\Program Files\\Git\\bin\\bash.exe" -c "sleep 20"
                         """
 
-                        def restoredHealth = bat(
+                        def restoredOutput = bat(
                             script: """
                                 @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}"
                             """,
                             returnStdout: true
-                        ).trim()
+                        )
+
+                        def restoredLines =
+                            restoredOutput
+                                .readLines()
+                                .collect { it.trim() }
+                                .findAll { it }
+
+                        def restoredHealth =
+                            restoredLines ?
+                            restoredLines.last() :
+                            'unknown'
 
                         echo "Restored production health: ${restoredHealth}"
 
-                        echo '=========================================='
+
+                        /*
+                         * STEP 6
+                         * Show final restored container.
+                         */
+
+                        bat """
+                            @docker ps -a --filter "name=${env.PROD_CONTAINER}"
+
+                            @echo.
+                            @echo Restored production image:
+                            @docker inspect ${env.PROD_CONTAINER} --format="{{.Config.Image}}" 2>nul
+
+                            @echo.
+                            @echo Restored production health:
+                            @docker inspect ${env.PROD_CONTAINER} --format="{{.State.Health.Status}}" 2>nul
+                        """
+
 
                         if (restoredHealth == 'healthy') {
 
+                            echo '=========================================='
                             echo 'ROLLBACK VERIFIED SUCCESSFULLY'
+                            echo '=========================================='
+
+                            echo "Failed Version : ${params.VERSION}"
                             echo "Restored Version: ${env.PREVIOUS_VERSION}"
+                            echo "Restored Image : ${env.PREVIOUS_IMAGE}"
                             echo 'Production Status: HEALTHY'
+
+                            echo '=========================================='
 
                         } else {
 
+                            echo '=========================================='
                             echo 'ROLLBACK VERIFICATION FAILED'
-                            echo "Production Health: ${restoredHealth}"
-                        }
+                            echo '=========================================='
 
-                        echo '=========================================='
+                            echo "Production Health: ${restoredHealth}"
+
+                            echo '=========================================='
+                        }
 
                     } else {
 
                         echo '=========================================='
                         echo 'NO PREVIOUS PRODUCTION VERSION FOUND'
+                        echo '=========================================='
+
                         echo 'Rollback restoration skipped.'
+                        echo 'There is no recorded previous production image.'
+
                         echo '=========================================='
                     }
 
+
+                    /*
+                     * IMPORTANT:
+                     *
+                     * Do NOT call error() here.
+                     *
+                     * Jenkins is already in FAILURE because the
+                     * deployment health check failed.
+                     *
+                     * Therefore the final build remains FAILURE
+                     * while the rollback is verified successfully.
+                     */
+
                     echo '=========================================='
                     echo 'AUTOMATIC ROLLBACK PROCESS FINISHED'
+                    echo '=========================================='
+
                     echo 'JENKINS BUILD WILL REMAIN FAILURE'
+
                     echo '=========================================='
                 }
             }
         }
+
+
+        // =========================================================
+        // ALWAYS
+        // =========================================================
 
         always {
 
