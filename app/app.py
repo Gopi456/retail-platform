@@ -1,5 +1,6 @@
 from flask import Flask, jsonify
 import os
+from app.database import get_db_connection
 
 app = Flask(__name__)
 
@@ -36,6 +37,31 @@ def health():
         "status": "UP",
         "version": VERSION
     }), 200
+
+@app.route("/db-health")
+def db_health():
+    try:
+        connection = get_db_connection()
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT 1")
+        result = cursor.fetchone()
+
+        cursor.close()
+        connection.close()
+
+        return jsonify({
+            "status": "UP",
+            "database": "CONNECTED",
+            "result": result[0]
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "DOWN",
+            "database": "UNAVAILABLE",
+            "error": str(e)
+        }), 500
 
 @app.route("/payment")
 def payment():
