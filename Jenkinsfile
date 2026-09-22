@@ -469,7 +469,7 @@ Image             : ${env.IMAGE_TAG}
 
             steps {
                 bat """
-                    curl.exe --fail ^
+                    C:/Windows/System32/curl.exe --fail ^
                     http://127.0.0.1:%CANDIDATE_PORT%/health
                 """
             }
@@ -611,7 +611,7 @@ Image             : ${env.IMAGE_TAG}
                  * Final application response.
                  */
                 bat """
-                    curl.exe --fail ^
+                    C:/Windows/System32/curl.exe --fail ^
                     http://127.0.0.1:%APP_PORT%/health
                 """
 
@@ -619,7 +619,7 @@ Image             : ${env.IMAGE_TAG}
                  * Database health endpoint.
                  */
                 bat """
-                    curl.exe --fail ^
+                    C:/Windows/System32/curl.exe --fail ^
                     http://127.0.0.1:%APP_PORT%/db-health
                 """
 
@@ -709,7 +709,7 @@ Image             : ${env.IMAGE_TAG}
                 """
 
                 bat """
-                    curl.exe --fail ^
+                    C:/Windows/System32/curl.exe --fail ^
                     http://127.0.0.1:%APP_PORT%/health
                 """
 
@@ -791,7 +791,7 @@ Image             : ${env.IMAGE_TAG}
                          * Verify restored application.
                          */
                         bat """
-                            curl.exe --fail ^
+                            C:/Windows/System32/curl.exe --fail ^
                             http://127.0.0.1:%APP_PORT%/health
                         """
 
