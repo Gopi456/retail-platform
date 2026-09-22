@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -68,29 +67,29 @@ pipeline {
                     def config = [
                         DEV: [
                             branch: 'develop',
-                            container: 'retail-app-dev',
-                            db: 'retail-db-dev',
-                            network: 'retail-dev-net',
+                            container: 'customer-app-dev',
+                            db: 'customer-db-dev',
+                            network: 'customer-dev-net',
                             port: '8081',
-                            volume: 'retail-db-dev-data'
+                            volume: 'customer-db-dev-data'
                         ],
 
                         UAT: [
                             branch: 'release/4.3.0',
-                            container: 'retail-app-uat',
-                            db: 'retail-db-uat',
-                            network: 'retail-uat-net',
+                            container: 'customer-app-uat',
+                            db: 'customer-db-uat',
+                            network: 'customer-uat-net',
                             port: '8082',
-                            volume: 'retail-db-uat-data'
+                            volume: 'customer-db-uat-data'
                         ],
 
                         PRODUCTION: [
                             branch: 'main',
-                            container: 'retail-app-prod',
-                            db: 'retail-db-prod',
-                            network: 'retail-prod-net',
+                            container: 'customer-app-prod',
+                            db: 'customer-db-prod',
+                            network: 'customer-prod-net',
                             port: '8083',
-                            volume: 'retail-db-prod-data'
+                            volume: 'customer-db-prod-data'
                         ]
                     ][params.ENVIRONMENT]
 
@@ -147,7 +146,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 2. Checkout / identify source
@@ -159,7 +157,6 @@ Image             : ${env.IMAGE_TAG}
                 bat 'git log -1 --oneline --decorate'
             }
         }
-
 
         /*
          * ------------------------------------------------------------
@@ -197,7 +194,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 4. Build Docker image
@@ -222,7 +218,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 5. Unit tests
@@ -243,7 +238,6 @@ Image             : ${env.IMAGE_TAG}
                 """
             }
         }
-
 
         /*
          * ------------------------------------------------------------
@@ -267,7 +261,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 7. Prepare database
@@ -284,7 +277,6 @@ Image             : ${env.IMAGE_TAG}
                 withEnv([
                     "DB_PASSWORD=${DB_CREDENTIALS_PSW}"
                 ]) {
-
                     bat """
                         docker inspect %DB_CONTAINER% >nul 2>&1 ^
                         || docker run -d ^
@@ -298,7 +290,7 @@ Image             : ${env.IMAGE_TAG}
                     """
 
                     /*
-                     * Wait for PostgreSQL to become healthy.
+                     * Wait for PostgreSQL to become available.
                      */
                     bat '''
                         for /L %%i in (1,1,30) do (
@@ -318,10 +310,9 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
-         * 8. Record current production/application image
+         * 8. Record current application image
          * ------------------------------------------------------------
          */
         stage('Record current image') {
@@ -365,7 +356,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 9. Start candidate
@@ -401,7 +391,6 @@ Image             : ${env.IMAGE_TAG}
                     "DB_HOST=${env.DB_CONTAINER}",
                     "FAIL_HEALTHCHECK=${env.FAIL_HEALTHCHECK}"
                 ]) {
-
                     bat """
                         docker run -d ^
                         --name %CANDIDATE% ^
@@ -422,7 +411,6 @@ Image             : ${env.IMAGE_TAG}
                 bat 'docker ps --filter "name=%CANDIDATE%"'
             }
         }
-
 
         /*
          * ------------------------------------------------------------
@@ -467,7 +455,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 11. Application health check
@@ -488,7 +475,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 12. Database connectivity check
@@ -506,7 +492,6 @@ Image             : ${env.IMAGE_TAG}
                     "DB_HOST=${env.DB_CONTAINER}",
                     "DB_PASSWORD=${DB_CREDENTIALS_PSW}"
                 ]) {
-
                     bat """
                         docker run --rm ^
                         --network %APP_NETWORK% ^
@@ -522,17 +507,11 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 13. Switch traffic
          *
          * Candidate has already passed validation.
-         *
-         * We first stop the old container but retain the image.
-         * Then start the new application using the validated image.
-         * If the new application fails, post-failure rollback restores
-         * PREVIOUS_IMAGE.
          * ------------------------------------------------------------
          */
         stage('Switch traffic') {
@@ -544,7 +523,7 @@ Image             : ${env.IMAGE_TAG}
 
             steps {
                 /*
-                 * Stop/remove candidate because the final application
+                 * Remove candidate because the final application
                  * will use the official environment port.
                  */
                 bat '''
@@ -557,7 +536,6 @@ Image             : ${env.IMAGE_TAG}
                     "APP_ENVIRONMENT=${params.ENVIRONMENT}",
                     "DB_HOST=${env.DB_CONTAINER}"
                 ]) {
-
                     bat """
                         docker run -d ^
                         --name %APP_CONTAINER% ^
@@ -582,7 +560,6 @@ Image             : ${env.IMAGE_TAG}
                 echo "Traffic switched to ${env.IMAGE_TAG}"
             }
         }
-
 
         /*
          * ------------------------------------------------------------
@@ -661,7 +638,6 @@ Image             : ${env.IMAGE_TAG}
             }
         }
 
-
         /*
          * ------------------------------------------------------------
          * 15. Manual rollback
@@ -691,7 +667,6 @@ Image             : ${env.IMAGE_TAG}
                     "APP_ENVIRONMENT=${params.ENVIRONMENT}",
                     "DB_HOST=${env.DB_CONTAINER}"
                 ]) {
-
                     bat """
                         docker run -d ^
                         --name %APP_CONTAINER% ^
@@ -714,7 +689,6 @@ Image             : ${env.IMAGE_TAG}
                 echo "Rollback started using image: ${env.IMAGE_TAG}"
             }
         }
-
 
         /*
          * ------------------------------------------------------------
@@ -744,7 +718,6 @@ Image             : ${env.IMAGE_TAG}
         }
     }
 
-
     /*
      * ============================================================
      * AUTOMATIC ROLLBACK
@@ -759,10 +732,8 @@ Image             : ${env.IMAGE_TAG}
      * to SUCCESS.
      */
     post {
-
         failure {
             script {
-
                 echo "============================================================"
                 echo "DEPLOYMENT FAILURE DETECTED"
                 echo "Environment : ${params.ENVIRONMENT}"
@@ -787,7 +758,6 @@ Image             : ${env.IMAGE_TAG}
                         env.PREVIOUS_IMAGE?.trim() &&
                         env.PREVIOUS_VERSION?.trim()
                     ) {
-
                         echo "Restoring previous image: ${env.PREVIOUS_IMAGE}"
 
                         bat '''
@@ -800,7 +770,6 @@ Image             : ${env.IMAGE_TAG}
                             "APP_ENVIRONMENT=${params.ENVIRONMENT}",
                             "DB_HOST=${env.DB_CONTAINER}"
                         ]) {
-
                             bat """
                                 docker run -d ^
                                 --name %APP_CONTAINER% ^
@@ -832,16 +801,13 @@ Image             : ${env.IMAGE_TAG}
                         echo "Restored version: ${env.PREVIOUS_VERSION}"
                         echo "Jenkins result  : FAILURE"
                         echo "============================================================"
-
                     } else {
-
                         echo "No previous image exists."
                         echo "Candidate was removed, but there is no version to restore."
                     }
                 }
             }
         }
-
 
         success {
             echo "============================================================"
@@ -852,7 +818,6 @@ Image             : ${env.IMAGE_TAG}
             echo "Image       : ${env.IMAGE_TAG ?: 'unknown'}"
             echo "============================================================"
         }
-
 
         always {
             echo "============================================================"
@@ -871,7 +836,7 @@ Image             : ${env.IMAGE_TAG}
             echo "Action      : ${params.DEPLOYMENT_ACTION}"
             echo "Version     : ${params.VERSION}"
             echo "Git commit  : ${env.GIT_SHA ?: 'unknown'}"
-            echo "Previous     : ${env.PREVIOUS_IMAGE ?: 'none'}"
+            echo "Previous    : ${env.PREVIOUS_IMAGE ?: 'none'}"
         }
     }
 }
