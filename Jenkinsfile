@@ -789,10 +789,28 @@ Image             : ${env.IMAGE_TAG}
 
                         /*
                          * Verify restored application.
+                         * Wait for Docker health before calling the application.
                          */
                         bat """
+                            setlocal EnableDelayedExpansion
+                            set ROLLBACK_HEALTHY=
+                            for /L %%i in (1,1,30) do (
+                                for /F "delims=" %%h in ('docker inspect --format="{{.State.Health.Status}}" %APP_CONTAINER% 2^>nul') do set ROLLBACK_HEALTHY=%%h
+                                echo Rollback health check %%i/30: !ROLLBACK_HEALTHY!
+                                if /I "!ROLLBACK_HEALTHY!"=="healthy" goto rollback_healthy
+                                timeout /t 2 /nobreak >nul
+                            )
+                            echo Rollback container did not become healthy.
+                            docker inspect %APP_CONTAINER%
+                            exit /b 1
+
+                            :rollback_healthy
+                            echo Rollback container is healthy.
                             C:/Windows/System32/curl.exe --fail ^
                             http://127.0.0.1:%APP_PORT%/health
+                            C:/Windows/System32/curl.exe --fail ^
+                            http://127.0.0.1:%APP_PORT%/db-health
+                            endlocal
                         """
 
                         echo "============================================================"
