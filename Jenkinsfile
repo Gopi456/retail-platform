@@ -798,7 +798,7 @@ Image             : ${env.IMAGE_TAG}
                                 for /F "delims=" %%h in ('docker inspect --format="{{.State.Health.Status}}" %APP_CONTAINER% 2^>nul') do set ROLLBACK_HEALTHY=%%h
                                 echo Rollback health check %%i/30: !ROLLBACK_HEALTHY!
                                 if /I "!ROLLBACK_HEALTHY!"=="healthy" goto rollback_healthy
-                                timeout /t 2 /nobreak >nul
+                                powershell -NoProfile -Command "Start-Sleep -Seconds 2"
                             )
                             echo Rollback container did not become healthy.
                             docker inspect %APP_CONTAINER%
