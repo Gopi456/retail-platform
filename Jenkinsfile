@@ -108,6 +108,18 @@ pipeline {
                     env.FAIL_HEALTHCHECK =
                         params.VERSION == '4.2.2' ? 'true' : 'false'
 
+                    /*
+                     * Required Task 2 failure injection.
+                     * Version 5.1 intentionally uses an invalid DB hostname.
+                     */
+                    env.FAIL_DB_CONNECTION =
+                        params.VERSION == '5.1' ? 'true' : 'false'
+
+                    env.EFFECTIVE_DB_HOST =
+                        env.FAIL_DB_CONNECTION == 'true'
+                            ? 'customer-db-invalid'
+                            : env.DB_CONTAINER
+
                     echo """
 ============================================================
 RESOLVED DEPLOYMENT CONFIGURATION
@@ -388,7 +400,7 @@ Image             : ${env.IMAGE_TAG}
                     "DB_PASSWORD=${DB_CREDENTIALS_PSW}",
                     "APP_VERSION=${params.VERSION}",
                     "APP_ENVIRONMENT=${params.ENVIRONMENT}",
-                    "DB_HOST=${env.DB_CONTAINER}",
+                    "DB_HOST=${env.EFFECTIVE_DB_HOST}",
                     "FAIL_HEALTHCHECK=${env.FAIL_HEALTHCHECK}"
                 ]) {
                     bat """
@@ -438,7 +450,7 @@ Image             : ${env.IMAGE_TAG}
                 /*
                  * Wait for Docker healthcheck.
                  *
-                 * v4.2.2 intentionally fails this check.
+                 * v4.2.2 intentionally fails this check for Task 1 rollback testing.
                  */
                 bat '''
                     for /L %%i in (1,1,30) do (
@@ -489,7 +501,7 @@ Image             : ${env.IMAGE_TAG}
 
             steps {
                 withEnv([
-                    "DB_HOST=${env.DB_CONTAINER}",
+                    "DB_HOST=${env.EFFECTIVE_DB_HOST}",
                     "DB_PASSWORD=${DB_CREDENTIALS_PSW}"
                 ]) {
                     bat """
