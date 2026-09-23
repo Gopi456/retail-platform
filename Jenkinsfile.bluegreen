@@ -37,14 +37,8 @@ pipeline {
         BLUE_PORT = '18081'
         GREEN_PORT = '18082'
 
-        ACTIVE_PORT = ''
-        CANDIDATE_PORT = ''
 
-        ACTIVE = ''
-        CANDIDATE = ''
-        ACTIVE_IMAGE = ''
-        NEW_ACTIVE = ''
-        TRAFFIC_SWITCHED = 'false'
+        BG_TRAFFIC_SWITCHED = 'false'
     }
 
     stages {
@@ -164,40 +158,40 @@ pipeline {
                     ).trim()
 
                     if (proxyConfig.contains('orders-blue:8081')) {
-                        env.ACTIVE = 'orders-blue'
+                        env.BG_ACTIVE = 'orders-blue'
                     } else if (proxyConfig.contains('orders-green:8081')) {
-                        env.ACTIVE = 'orders-green'
+                        env.BG_ACTIVE = 'orders-green'
                     } else {
                         error('Unable to determine active color from nginx/default.conf')
                     }
 
-                    env.CANDIDATE =
-                        env.ACTIVE == 'orders-blue' ? 'orders-green' : 'orders-blue'
+                    env.BG_CANDIDATE =
+                        env.BG_ACTIVE == 'orders-blue' ? 'orders-green' : 'orders-blue'
 
-                    env.CANDIDATE_PORT =
-                        env.CANDIDATE == 'orders-blue' ? '18081' : '18082'
+                    env.BG_CANDIDATE_PORT =
+                        env.BG_CANDIDATE == 'orders-blue' ? '18081' : '18082'
 
-                    env.ACTIVE_PORT =
-                        env.ACTIVE == 'orders-blue' ? '18081' : '18082'
+                    env.BG_ACTIVE_PORT =
+                        env.BG_ACTIVE == 'orders-blue' ? '18081' : '18082'
 
                     def activeImageOutput = bat(
-                        script: "@docker inspect ${env.ACTIVE} --format=\"{{.Config.Image}}\" 2>nul || exit /b 0",
+                        script: "@docker inspect ${env.BG_ACTIVE} --format=\"{{.Config.Image}}\" 2>nul || exit /b 0",
                         returnStdout: true
                     ).trim()
 
                     def activeImageLines =
                         activeImageOutput.readLines().findAll { it.trim() }
 
-                    env.ACTIVE_IMAGE =
+                    env.BG_ACTIVE_IMAGE =
                         activeImageLines
                             ? activeImageLines.last().trim()
                             : 'unknown'
 
                     echo "BLUE=orders-blue:18081"
                     echo "GREEN=orders-green:18082"
-                    echo "ACTIVE=${env.ACTIVE}"
-                    echo "CANDIDATE=${env.CANDIDATE}"
-                    echo "ACTIVE_IMAGE=${env.ACTIVE_IMAGE}"
+                    echo "ACTIVE=${env.BG_ACTIVE}"
+                    echo "CANDIDATE=${env.BG_CANDIDATE}"
+                    echo "ACTIVE_IMAGE=${env.BG_ACTIVE_IMAGE}"
                 }
             }
         }
@@ -263,16 +257,16 @@ pipeline {
             steps {
                 script {
                     echo "Rollback requested"
-                    echo "Current active container: ${env.ACTIVE}"
-                    echo "Rollback candidate: ${env.CANDIDATE}"
+                    echo "Current active container: ${env.BG_ACTIVE}"
+                    echo "Rollback candidate: ${env.BG_CANDIDATE}"
                     echo "Rollback version: ${params.VERSION}"
 
                     bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
 
                     bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
 
-                    echo "ROLLBACK candidate ${env.CANDIDATE} started on port ${env.CANDIDATE_PORT}"
-                    echo "Current active ${env.ACTIVE} remains untouched until candidate validation succeeds"
+                    echo "ROLLBACK candidate ${env.BG_CANDIDATE} started on port ${env.BG_CANDIDATE_PORT}"
+                    echo "Current active ${env.BG_ACTIVE} remains untouched until candidate validation succeeds"
                 }
             }
         }
@@ -286,10 +280,10 @@ pipeline {
             }
             steps {
                 script {
-                    def proxyTarget = env.CANDIDATE
+                    def proxyTarget = env.BG_CANDIDATE
 
                     echo "BLUE/GREEN traffic switch"
-                    echo "Current active: ${env.ACTIVE}"
+                    echo "Current active: ${env.BG_ACTIVE}"
                     echo "Candidate: ${proxyTarget}"
                     echo "Switching traffic to: ${proxyTarget}"
 
@@ -298,11 +292,11 @@ pipeline {
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
 
-                    env.NEW_ACTIVE = env.CANDIDATE
-                    env.TRAFFIC_SWITCHED = 'true'
+                    env.BG_NEW_ACTIVE = env.BG_CANDIDATE
+                    env.BG_TRAFFIC_SWITCHED = 'true'
 
                     echo "Traffic successfully switched to ${proxyTarget}"
-                    echo "Previous active container: ${env.ACTIVE}"
+                    echo "Previous active container: ${env.BG_ACTIVE}"
                 }
             }
         }
@@ -321,7 +315,7 @@ pipeline {
 
                 bat 'curl.exe --fail --silent --show-error http://localhost:18080/health | findstr /C:"\"version\":\"%VERSION%\"" >nul'
 
-                echo "Traffic verification passed for ${env.CANDIDATE}"
+                echo "Traffic verification passed for ${env.BG_CANDIDATE}"
                 echo "Expected production version: ${params.VERSION}"
             }
         }
@@ -329,7 +323,7 @@ pipeline {
         stage('Deployment Verification') {
             steps {
                 script {
-                    def verifyContainer = env.NEW_ACTIVE
+                    def verifyContainer = env.BG_NEW_ACTIVE
 
                     if (!verifyContainer?.trim()) {
                         error('No successfully activated container was recorded')
@@ -372,20 +366,20 @@ pipeline {
     post {
         failure {
             script {
-                if (env.TRAFFIC_SWITCHED != 'true') {
+                if (env.BG_TRAFFIC_SWITCHED != 'true') {
 
                     bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
 
                     echo "FAILURE before traffic switch."
-                    echo "Candidate ${env.CANDIDATE ?: 'unknown'} removed."
-                    echo "Previous active container ${env.ACTIVE ?: 'unknown'} retained."
+                    echo "Candidate ${env.BG_CANDIDATE ?: 'unknown'} removed."
+                    echo "Previous active container ${env.BG_ACTIVE ?: 'unknown'} retained."
 
                 } else {
 
                     echo "FAILURE after traffic switch."
-                    echo "Restoring traffic to previous active container ${env.ACTIVE}"
+                    echo "Restoring traffic to previous active container ${env.BG_ACTIVE}"
 
-                    bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.ACTIVE}"
+                    bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.BG_ACTIVE}"
 
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
@@ -394,15 +388,15 @@ pipeline {
 
                     bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
 
-                    echo "Traffic restored to previous active container ${env.ACTIVE}."
-                    echo "Failed candidate ${env.CANDIDATE} removed."
+                    echo "Traffic restored to previous active container ${env.BG_ACTIVE}."
+                    echo "Failed candidate ${env.BG_CANDIDATE} removed."
                 }
 
                 echo "Failure handling:"
-                echo "trafficSwitched=${env.TRAFFIC_SWITCHED ?: 'false'}"
-                echo "candidate=${env.CANDIDATE ?: 'unknown'}"
-                echo "active=${env.ACTIVE ?: 'unknown'}"
-                echo "newActive=${env.NEW_ACTIVE ?: 'unknown'}"
+                echo "trafficSwitched=${env.BG_TRAFFIC_SWITCHED ?: 'false'}"
+                echo "candidate=${env.BG_CANDIDATE ?: 'unknown'}"
+                echo "active=${env.BG_ACTIVE ?: 'unknown'}"
+                echo "newActive=${env.BG_NEW_ACTIVE ?: 'unknown'}"
                 echo "version=${params.VERSION}"
                 echo "commit=${env.GIT_SHA ?: 'unknown'}"
             }
@@ -415,9 +409,9 @@ pipeline {
             echo "Final result=${currentBuild.currentResult}"
             echo "Version=${params.VERSION}"
             echo "Git commit=${env.GIT_SHA ?: 'unknown'}"
-            echo "Active=${env.ACTIVE ?: 'unknown'}"
-            echo "Candidate=${env.CANDIDATE ?: 'unknown'}"
-            echo "New active=${env.NEW_ACTIVE ?: 'unknown'}"
+            echo "Active=${env.BG_ACTIVE ?: 'unknown'}"
+            echo "Candidate=${env.BG_CANDIDATE ?: 'unknown'}"
+            echo "New active=${env.BG_NEW_ACTIVE ?: 'unknown'}"
         }
     }
 }
