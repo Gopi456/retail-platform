@@ -44,7 +44,6 @@ pipeline {
         CANDIDATE = ''
         ACTIVE_IMAGE = ''
         NEW_ACTIVE = ''
-        GIT_SHA = ''
         TRAFFIC_SWITCHED = 'false'
     }
 
