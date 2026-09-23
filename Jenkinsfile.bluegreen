@@ -98,11 +98,11 @@ pipeline {
 
                 bat '''
                     for /L %%i in (1,1,30) do (
-                        for /F "delims=" %%s in ('docker inspect %DB% --format="{{.State.Health.Status}}" 2^>nul') do (
-                            if /I "%%s"=="healthy" exit /b 0
-                        )
+                        docker exec %DB% pg_isready -U retailuser -d retaildb >nul 2^>^&1
+                        if not errorlevel 1 exit /b 0
                         %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
                     )
+                    echo Database is not ready.
                     exit /b 1
                 '''
             }
