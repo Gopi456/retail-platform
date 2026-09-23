@@ -126,7 +126,7 @@ pipeline {
         }
 
         stage('Application Health Check') {
-            when { expression { params.ACTION == 'DEPLOY' } }
+            when { expression { params.ACTION == 'DEPLOY' || params.ACTION == 'ROLLBACK' } }
             steps {
                 bat '''
                     for /L %%i in (1,1,30) do (
@@ -141,7 +141,7 @@ pipeline {
         }
 
         stage('Integration Check') {
-            when { expression { params.ACTION == 'DEPLOY' } }
+            when { expression { params.ACTION == 'DEPLOY' || params.ACTION == 'ROLLBACK' } }
             steps { bat "docker run --rm --network %NETWORK% -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION% python -c \"from app.database import get_db_connection; c=get_db_connection(); c.close(); print('database connectivity passed')\"" }
         }
 
