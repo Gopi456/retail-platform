@@ -201,11 +201,11 @@ pipeline {
                 expression { params.ACTION == 'DEPLOY' }
             }
             steps {
-                bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+                bat "docker rm -f ${env.BG_CANDIDATE} 2>nul || exit /b 0"
 
-                bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+                bat "docker run -d --name ${env.BG_CANDIDATE} --network %NETWORK% -p ${env.BG_CANDIDATE_PORT}:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%"
 
-                echo "DEPLOY candidate %CANDIDATE% started on port %CANDIDATE_PORT%"
+                echo "DEPLOY candidate ${env.BG_CANDIDATE} started on port ${env.BG_CANDIDATE_PORT}"
             }
         }
 
@@ -214,7 +214,7 @@ pipeline {
                 expression { params.ACTION == 'DEPLOY' }
             }
             steps {
-                bat 'docker inspect %CANDIDATE% --format="image={{.Config.Image}} status={{.State.Status}} network={{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}"'
+                bat "docker inspect ${env.BG_CANDIDATE} --format=\"image={{.Config.Image}} status={{.State.Status}} network={{range \$k, \$v := .NetworkSettings.Networks}}{\$k} {{end}}\""
             }
         }
 
@@ -228,7 +228,7 @@ pipeline {
             steps {
                 bat '''
                     for /L %%i in (1,1,30) do (
-                        for /F "delims=" %%s in ('docker inspect %CANDIDATE% --format="{{.State.Health.Status}}" 2^>nul') do (
+                        for /F "delims=" %%s in ('docker inspect ${env.BG_CANDIDATE} --format="{{.State.Health.Status}}" 2^>nul') do (
                             if /I "%%s"=="healthy" exit /b 0
                         )
                         %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
@@ -261,9 +261,9 @@ pipeline {
                     echo "Rollback candidate: ${env.BG_CANDIDATE}"
                     echo "Rollback version: ${params.VERSION}"
 
-                    bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+                    bat "docker rm -f ${env.BG_CANDIDATE} 2>nul || exit /b 0"
 
-                    bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+                    bat "docker run -d --name ${env.BG_CANDIDATE} --network %NETWORK% -p ${env.BG_CANDIDATE_PORT}:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%"
 
                     echo "ROLLBACK candidate ${env.BG_CANDIDATE} started on port ${env.BG_CANDIDATE_PORT}"
                     echo "Current active ${env.BG_ACTIVE} remains untouched until candidate validation succeeds"
@@ -354,11 +354,11 @@ pipeline {
                 }
             }
             steps {
-                bat 'docker rm -f %ACTIVE% 2>nul || exit /b 0'
+                bat "docker rm -f ${env.BG_ACTIVE} 2>nul || exit /b 0"
 
-                echo "Previous active container %ACTIVE% removed only after successful traffic and deployment verification."
+                echo "Previous active container ${env.BG_ACTIVE} removed only after successful traffic and deployment verification."
 
-                echo "New active container: %NEW_ACTIVE%"
+                echo "New active container: ${env.BG_NEW_ACTIVE}"
             }
         }
     }
@@ -368,7 +368,7 @@ pipeline {
             script {
                 if (env.BG_TRAFFIC_SWITCHED != 'true') {
 
-                    bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+                    bat "docker rm -f ${env.BG_CANDIDATE} 2>nul || exit /b 0"
 
                     echo "FAILURE before traffic switch."
                     echo "Candidate ${env.BG_CANDIDATE ?: 'unknown'} removed."
@@ -386,7 +386,7 @@ pipeline {
 
                     bat "curl.exe --fail --silent --show-error http://localhost:18080/health"
 
-                    bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+                    bat "docker rm -f ${env.BG_CANDIDATE} 2>nul || exit /b 0"
 
                     echo "Traffic restored to previous active container ${env.BG_ACTIVE}."
                     echo "Failed candidate ${env.BG_CANDIDATE} removed."
