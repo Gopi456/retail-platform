@@ -6,9 +6,9 @@ param(
     [string]$ConfigPath
 )
 
-$config = $ConfigPath
+$config = $ConfigPath.Trim("'`"")
 
-$content = Get-Content $config -Raw
+$content = (Get-Content $config) -join [Environment]::NewLine
 
 $content = $content -replace 'server orders-(blue|green):8081;', "server $Target`:8081;"
 
