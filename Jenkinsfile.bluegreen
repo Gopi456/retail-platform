@@ -7,24 +7,49 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'ACTION', choices: ['DEPLOY', 'ROLLBACK'], description: 'Blue-green operation')
-        string(name: 'VERSION', defaultValue: '7.9', description: 'Git tag and immutable image version')
-        choice(name: 'CONFIRM_PROD', choices: ['NO', 'YES'], description: 'Required for production')
+        choice(
+            name: 'ACTION',
+            choices: ['DEPLOY', 'ROLLBACK'],
+            description: 'Blue-green operation'
+        )
+        string(
+            name: 'VERSION',
+            defaultValue: '7.9',
+            description: 'Git tag and immutable image version'
+        )
+        choice(
+            name: 'CONFIRM_PROD',
+            choices: ['NO', 'YES'],
+            description: 'Required for production'
+        )
     }
 
     environment {
         IMAGE = 'orders-api'
         ORDERS_DB = credentials('orders-db-credentials')
+
         NETWORK = 'orders-network'
+
         BLUE = 'orders-blue'
         GREEN = 'orders-green'
         DB = 'orders-db'
-        ACTIVE_PORT = '18081'
+
         BLUE_PORT = '18081'
         GREEN_PORT = '18082'
+
+        ACTIVE_PORT = ''
+        CANDIDATE_PORT = ''
+
+        ACTIVE = ''
+        CANDIDATE = ''
+        ACTIVE_IMAGE = ''
+        NEW_ACTIVE = ''
+        GIT_SHA = ''
+        TRAFFIC_SWITCHED = 'false'
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -35,26 +60,45 @@ pipeline {
         stage('Validate request') {
             steps {
                 script {
-                    if (!params.VERSION?.trim()) { error('VERSION is required') }
-                    if (params.CONFIRM_PROD != 'YES') { error('Blue-green production deployment requires CONFIRM_PROD=YES') }
+                    if (!params.VERSION?.trim()) {
+                        error('VERSION is required')
+                    }
+
+                    if (params.CONFIRM_PROD != 'YES') {
+                        error('Blue-green production deployment requires CONFIRM_PROD=YES')
+                    }
                 }
+
                 bat 'git rev-parse --verify refs/tags/v%VERSION%'
+
                 script {
-                    def shaOutput = bat(script: '@git rev-list -n 1 v%VERSION%', returnStdout: true).trim()
-                    env.GIT_SHA = shaOutput.readLines().findAll { it.trim() }.last().trim()
+                    def shaOutput = bat(
+                        script: '@git rev-list -n 1 v%VERSION%',
+                        returnStdout: true
+                    ).trim()
+
+                    def shaLines = shaOutput.readLines().findAll { it.trim() }
+
+                    if (!shaLines) {
+                        error("Unable to resolve commit for tag v${params.VERSION}")
+                    }
+
+                    env.GIT_SHA = shaLines.last().trim()
                 }
+
                 echo "Release ${params.VERSION} uses commit ${env.GIT_SHA}"
             }
         }
 
         stage('Prepare infrastructure') {
-            when { expression { params.ACTION == 'DEPLOY' } }
             steps {
                 bat 'docker network inspect %NETWORK% >nul 2>&1 || docker network create %NETWORK%'
+
                 bat 'docker inspect %DB% >nul 2>&1 || docker run -d --name %DB% --network %NETWORK% -e POSTGRES_DB=retaildb -e POSTGRES_USER=retailuser -e POSTGRES_PASSWORD=%ORDERS_DB_PSW% -v orders-db-data:/var/lib/postgresql/data postgres:16-alpine --health-cmd="pg_isready -U retailuser -d retaildb" --health-interval=5s --health-timeout=5s --health-retries=12'
+
                 bat '''
                     for /L %%i in (1,1,30) do (
-                        for /F "delims=" %%s in ('docker inspect %DB% --format="{{.State.Status}}" 2^>nul') do (
+                        for /F "delims=" %%s in ('docker inspect %DB% --format="{{.State.Health.Status}}" 2^>nul') do (
                             if /I "%%s"=="healthy" exit /b 0
                         )
                         %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
@@ -65,18 +109,51 @@ pipeline {
         }
 
         stage('Docker Build') {
-            when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'docker build --label org.opencontainers.image.revision=%GIT_SHA% -t %IMAGE%:%VERSION% .' }
+            when {
+                expression { params.ACTION == 'DEPLOY' }
+            }
+            steps {
+                bat 'docker build --label org.opencontainers.image.revision=%GIT_SHA% -t %IMAGE%:%VERSION% .'
+            }
         }
 
         stage('Docker Image Validation') {
-            when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'docker image inspect %IMAGE%:%VERSION%' }
+            steps {
+                bat 'docker image inspect %IMAGE%:%VERSION%'
+
+                script {
+                    def imageRevision = bat(
+                        script: '@docker image inspect %IMAGE%:%VERSION% --format="{{index .Config.Labels \\"org.opencontainers.image.revision\\"}}"',
+                        returnStdout: true
+                    ).trim()
+
+                    def revisionLines = imageRevision.readLines().findAll { it.trim() }
+
+                    if (!revisionLines) {
+                        error("Image %IMAGE%:%VERSION% does not contain org.opencontainers.image.revision")
+                    }
+
+                    def actualRevision = revisionLines.last().trim()
+
+                    if (actualRevision != env.GIT_SHA) {
+                        error(
+                            "Immutable image validation failed: " +
+                            "expected revision ${env.GIT_SHA}, found ${actualRevision}"
+                        )
+                    }
+
+                    echo "Image %IMAGE%:%VERSION% is traceable to Git commit ${env.GIT_SHA}"
+                }
+            }
         }
 
         stage('Unit/Application Test') {
-            when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'docker run --rm %IMAGE%:%VERSION% python -m pytest -q -p no:cacheprovider' }
+            when {
+                expression { params.ACTION == 'DEPLOY' }
+            }
+            steps {
+                bat 'docker run --rm %IMAGE%:%VERSION% python -m pytest -q -p no:cacheprovider'
+            }
         }
 
         stage('Identify active color') {
@@ -95,38 +172,70 @@ pipeline {
                         error('Unable to determine active color from nginx/default.conf')
                     }
 
-                    env.CANDIDATE = env.ACTIVE == env.BLUE ? env.GREEN : env.BLUE
-                    env.CANDIDATE_PORT = env.CANDIDATE == env.BLUE ? env.BLUE_PORT : env.GREEN_PORT
-                    env.ACTIVE_PORT = env.ACTIVE == env.BLUE ? env.BLUE_PORT : env.GREEN_PORT
+                    env.CANDIDATE =
+                        env.ACTIVE == env.BLUE ? env.GREEN : env.BLUE
+
+                    env.CANDIDATE_PORT =
+                        env.CANDIDATE == env.BLUE
+                            ? env.BLUE_PORT
+                            : env.GREEN_PORT
+
+                    env.ACTIVE_PORT =
+                        env.ACTIVE == env.BLUE
+                            ? env.BLUE_PORT
+                            : env.GREEN_PORT
 
                     def activeImageOutput = bat(
                         script: "@docker inspect ${env.ACTIVE} --format=\"{{.Config.Image}}\" 2>nul || exit /b 0",
                         returnStdout: true
                     ).trim()
 
-                    def activeImageLines = activeImageOutput.readLines().findAll { it.trim() }
-                    env.ACTIVE_IMAGE = activeImageLines ? activeImageLines.last().trim() : 'unknown'
+                    def activeImageLines =
+                        activeImageOutput.readLines().findAll { it.trim() }
 
-                    echo "BLUE=${env.BLUE}:${env.BLUE_PORT}; GREEN=${env.GREEN}:${env.GREEN_PORT}; active=${env.ACTIVE}; candidate=${env.CANDIDATE}; activeImage=${env.ACTIVE_IMAGE}"
+                    env.ACTIVE_IMAGE =
+                        activeImageLines
+                            ? activeImageLines.last().trim()
+                            : 'unknown'
+
+                    echo "BLUE=${env.BLUE}:${env.BLUE_PORT}"
+                    echo "GREEN=${env.GREEN}:${env.GREEN_PORT}"
+                    echo "ACTIVE=${env.ACTIVE}"
+                    echo "CANDIDATE=${env.CANDIDATE}"
+                    echo "ACTIVE_IMAGE=${env.ACTIVE_IMAGE}"
                 }
             }
         }
 
         stage('Start candidate') {
-            when { expression { params.ACTION == 'DEPLOY' } }
+            when {
+                expression { params.ACTION == 'DEPLOY' }
+            }
             steps {
                 bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+
                 bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+
+                echo "DEPLOY candidate %CANDIDATE% started on port %CANDIDATE_PORT%"
             }
         }
 
         stage('Container Validation') {
-            when { expression { params.ACTION == 'DEPLOY' } }
-            steps { bat 'docker inspect %CANDIDATE% --format="image={{.Config.Image}} status={{.State.Status}} network={{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}"' }
+            when {
+                expression { params.ACTION == 'DEPLOY' }
+            }
+            steps {
+                bat 'docker inspect %CANDIDATE% --format="image={{.Config.Image}} status={{.State.Status}} network={{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}"'
+            }
         }
 
         stage('Application Health Check') {
-            when { expression { params.ACTION == 'DEPLOY' || params.ACTION == 'ROLLBACK' } }
+            when {
+                expression {
+                    params.ACTION == 'DEPLOY' ||
+                    params.ACTION == 'ROLLBACK'
+                }
+            }
             steps {
                 bat '''
                     for /L %%i in (1,1,30) do (
@@ -141,110 +250,179 @@ pipeline {
         }
 
         stage('Integration Check') {
-            when { expression { params.ACTION == 'DEPLOY' || params.ACTION == 'ROLLBACK' } }
-            steps { bat "docker run --rm --network %NETWORK% -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION% python -c \"from app.database import get_db_connection; c=get_db_connection(); c.close(); print('database connectivity passed')\"" }
-        }
-
-        stage('Traffic Switch') {
-            when { expression { params.ACTION == 'DEPLOY' } }
-            steps {
-                script {
-                    def proxyTarget = env.CANDIDATE
-
-                    echo "Switching traffic from ${env.ACTIVE} to ${proxyTarget}"
-
-                    bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${proxyTarget}"
-
-                    bat 'docker exec orders-proxy nginx -t'
-                    bat 'docker exec orders-proxy nginx -s reload'
-
-                    echo "Traffic switched to ${proxyTarget}"
-                    env.NEW_ACTIVE = env.CANDIDATE
-                    env.TRAFFIC_SWITCHED = 'true'
-                    echo "Previous active container: ${env.ACTIVE}"
+            when {
+                expression {
+                    params.ACTION == 'DEPLOY' ||
+                    params.ACTION == 'ROLLBACK'
                 }
             }
-        }
-
-
-        stage('Traffic Verification') {
-            when { expression { params.ACTION == 'DEPLOY' } }
             steps {
-                bat 'curl.exe --fail --silent --show-error http://localhost:18080/health'
-                bat 'curl.exe --fail --silent --show-error http://localhost:18080/db-health'
-                echo "Traffic verification passed for ${env.CANDIDATE}"
+                bat "docker run --rm --network %NETWORK% -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION% python -c \"from app.database import get_db_connection; c=get_db_connection(); c.close(); print('database connectivity passed')\""
             }
         }
 
-
-
         stage('Rollback') {
-            when { expression { params.ACTION == 'ROLLBACK' } }
+            when {
+                expression { params.ACTION == 'ROLLBACK' }
+            }
             steps {
                 script {
                     echo "Rollback requested"
                     echo "Current active container: ${env.ACTIVE}"
+                    echo "Rollback candidate: ${env.CANDIDATE}"
                     echo "Rollback version: ${params.VERSION}"
 
                     bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
 
                     bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
 
-                    echo "Rollback candidate ${env.CANDIDATE} started on port ${env.CANDIDATE_PORT}"
+                    echo "ROLLBACK candidate ${env.CANDIDATE} started on port ${env.CANDIDATE_PORT}"
+                    echo "Current active ${env.ACTIVE} remains untouched until candidate validation succeeds"
                 }
+            }
+        }
+
+        stage('Traffic Switch') {
+            when {
+                expression {
+                    params.ACTION == 'DEPLOY' ||
+                    params.ACTION == 'ROLLBACK'
+                }
+            }
+            steps {
+                script {
+                    def proxyTarget = env.CANDIDATE
+
+                    echo "BLUE/GREEN traffic switch"
+                    echo "Current active: ${env.ACTIVE}"
+                    echo "Candidate: ${proxyTarget}"
+                    echo "Switching traffic to: ${proxyTarget}"
+
+                    bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${proxyTarget}"
+
+                    bat 'docker exec orders-proxy nginx -t'
+                    bat 'docker exec orders-proxy nginx -s reload'
+
+                    env.NEW_ACTIVE = env.CANDIDATE
+                    env.TRAFFIC_SWITCHED = 'true'
+
+                    echo "Traffic successfully switched to ${proxyTarget}"
+                    echo "Previous active container: ${env.ACTIVE}"
+                }
+            }
+        }
+
+        stage('Traffic Verification') {
+            when {
+                expression {
+                    params.ACTION == 'DEPLOY' ||
+                    params.ACTION == 'ROLLBACK'
+                }
+            }
+            steps {
+                bat 'curl.exe --fail --silent --show-error http://localhost:18080/health'
+
+                bat 'curl.exe --fail --silent --show-error http://localhost:18080/db-health'
+
+                bat 'curl.exe --fail --silent --show-error http://localhost:18080/health | findstr /C:"\"version\":\"%VERSION%\"" >nul'
+
+                echo "Traffic verification passed for ${env.CANDIDATE}"
+                echo "Expected production version: ${params.VERSION}"
             }
         }
 
         stage('Deployment Verification') {
             steps {
-            script {
-                def verifyContainer = params.ACTION == 'DEPLOY' ? env.NEW_ACTIVE : env.ACTIVE
+                script {
+                    def verifyContainer = env.NEW_ACTIVE
 
-                echo "Verifying deployed container: ${verifyContainer}"
+                    if (!verifyContainer?.trim()) {
+                        error('No successfully activated container was recorded')
+                    }
 
-                bat "docker ps --filter name=${verifyContainer} --filter name=%DB%"
+                    echo "Verifying deployed container: ${verifyContainer}"
 
-                bat "docker inspect ${verifyContainer} --format=\"image={{.Config.Image}} status={{.State.Status}} health={{.State.Health.Status}}\""
+                    bat "docker ps --filter name=${verifyContainer}"
 
-                bat "curl.exe --fail --silent --show-error http://localhost:18080/health"
+                    bat "docker inspect ${verifyContainer} --format=\"image={{.Config.Image}} status={{.State.Status}} health={{.State.Health.Status}}\""
 
-                bat "curl.exe --fail --silent --show-error http://localhost:18080/db-health"
+                    bat "docker inspect ${verifyContainer} --format=\"version={{index .Config.Env 0}}\" 2>nul || exit /b 0"
+
+                    bat 'curl.exe --fail --silent --show-error http://localhost:18080/health'
+
+                    bat 'curl.exe --fail --silent --show-error http://localhost:18080/db-health'
+
+                    echo "Deployment verification passed for ${verifyContainer}"
+                }
             }
         }
 
         stage('Old Version Cleanup') {
-            when { expression { params.ACTION == 'DEPLOY' } }
+            when {
+                expression {
+                    params.ACTION == 'DEPLOY' ||
+                    params.ACTION == 'ROLLBACK'
+                }
+            }
             steps {
                 bat 'docker rm -f %ACTIVE% 2>nul || exit /b 0'
-                echo "Previous active container %ACTIVE% removed after successful deployment verification."
+
+                echo "Previous active container %ACTIVE% removed only after successful traffic and deployment verification."
+
+                echo "New active container: %NEW_ACTIVE%"
             }
         }
-
     }
-
 
     post {
         failure {
             script {
                 if (env.TRAFFIC_SWITCHED != 'true') {
+
                     bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
-                    echo "Candidate removed; previous active container retained."
+
+                    echo "FAILURE before traffic switch."
+                    echo "Candidate ${env.CANDIDATE ?: 'unknown'} removed."
+                    echo "Previous active container ${env.ACTIVE ?: 'unknown'} retained."
+
                 } else {
-                    echo "Deployment failed after traffic switch; restoring traffic to ${env.ACTIVE}"
+
+                    echo "FAILURE after traffic switch."
+                    echo "Restoring traffic to previous active container ${env.ACTIVE}"
+
                     bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.ACTIVE}"
+
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
+
                     bat "curl.exe --fail --silent --show-error http://localhost:18080/health"
+
                     bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
-                    echo "Traffic restored to previous active container ${env.ACTIVE}; failed candidate removed."
+
+                    echo "Traffic restored to previous active container ${env.ACTIVE}."
+                    echo "Failed candidate ${env.CANDIDATE} removed."
                 }
-                echo "Failure handling: trafficSwitched=${env.TRAFFIC_SWITCHED ?: 'false'}; candidate=${env.CANDIDATE ?: 'unknown'}; active=${env.ACTIVE ?: 'unknown'}; newActive=${env.NEW_ACTIVE ?: 'unknown'}"
+
+                echo "Failure handling:"
+                echo "trafficSwitched=${env.TRAFFIC_SWITCHED ?: 'false'}"
+                echo "candidate=${env.CANDIDATE ?: 'unknown'}"
+                echo "active=${env.ACTIVE ?: 'unknown'}"
+                echo "newActive=${env.NEW_ACTIVE ?: 'unknown'}"
+                echo "version=${params.VERSION}"
+                echo "commit=${env.GIT_SHA ?: 'unknown'}"
             }
         }
+
         always {
             bat 'docker ps -a'
             bat 'docker images orders-api'
-            echo "Final result=${currentBuild.currentResult}; version=${params.VERSION}; commit=${env.GIT_SHA ?: 'unknown'}"
+
+            echo "Final result=${currentBuild.currentResult}"
+            echo "Version=${params.VERSION}"
+            echo "Git commit=${env.GIT_SHA ?: 'unknown'}"
+            echo "Active=${env.ACTIVE ?: 'unknown'}"
+            echo "Candidate=${env.CANDIDATE ?: 'unknown'}"
+            echo "New active=${env.NEW_ACTIVE ?: 'unknown'}"
         }
     }
 }
