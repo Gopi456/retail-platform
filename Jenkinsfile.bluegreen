@@ -154,10 +154,9 @@ pipeline {
             steps {
                 script {
                     def proxyConfig = bat(
-                        script: '''@%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command "$c = Get-Content -Raw -LiteralPath $env:NGINX_CONFIG; if ($c -match "server orders-blue:8081;") { Write-Output "server orders-blue:8081;" } elseif ($c -match "server orders-green:8081;") { Write-Output "server orders-green:8081;" } else { exit 1 }"''' ,
+                        script: '''@%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command "$c = Get-Content -Raw -LiteralPath 'C:/Users/Admin/retail-platform/nginx/default.conf'; if ($c -match 'server orders-blue:8081;') { Write-Output 'server orders-blue:8081;' } elseif ($c -match 'server orders-green:8081;') { Write-Output 'server orders-green:8081;' } else { exit 1 }"''',
                         returnStdout: true
                     ).trim()
-
                     if (proxyConfig.contains('orders-blue:8081')) {
                         env.BG_ACTIVE = 'orders-blue'
                     } else if (proxyConfig.contains('orders-green:8081')) {
