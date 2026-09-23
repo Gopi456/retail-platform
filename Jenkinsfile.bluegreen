@@ -309,11 +309,11 @@ pipeline {
                 }
             }
             steps {
-                bat 'curl.exe --fail --silent --show-error http://localhost:18080/health'
+                bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health"
 
-                bat 'curl.exe --fail --silent --show-error http://localhost:18080/db-health'
+                bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/db-health"
 
-                bat 'curl.exe --fail --silent --show-error http://localhost:18080/health | findstr /C:"\"version\":\"%VERSION%\"" >nul'
+                bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health | findstr /C:"\"version\":\"%VERSION%\"" >nul"
 
                 echo "Traffic verification passed for ${env.BG_CANDIDATE}"
                 echo "Expected production version: ${params.VERSION}"
@@ -337,9 +337,9 @@ pipeline {
 
                     bat "docker inspect ${verifyContainer} --format=\"version={{index .Config.Env 0}}\" 2>nul || exit /b 0"
 
-                    bat 'curl.exe --fail --silent --show-error http://localhost:18080/health'
+                    bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health"
 
-                    bat 'curl.exe --fail --silent --show-error http://localhost:18080/db-health'
+                    bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/db-health"
 
                     echo "Deployment verification passed for ${verifyContainer}"
                 }
@@ -384,7 +384,7 @@ pipeline {
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
 
-                    bat "curl.exe --fail --silent --show-error http://localhost:18080/health"
+                    bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health"
 
                     bat "docker rm -f ${env.BG_CANDIDATE} 2>nul || exit /b 0"
 
