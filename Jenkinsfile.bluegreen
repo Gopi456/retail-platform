@@ -226,7 +226,7 @@ pipeline {
                 }
             }
             steps {
-                bat '''
+                bat """
                     for /L %%i in (1,1,30) do (
                         for /F "delims=" %%s in ('docker inspect ${env.BG_CANDIDATE} --format="{{.State.Health.Status}}" 2^>nul') do (
                             if /I "%%s"=="healthy" exit /b 0
@@ -234,7 +234,7 @@ pipeline {
                         %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
                     )
                     exit /b 1
-                '''
+                """
             }
         }
 
