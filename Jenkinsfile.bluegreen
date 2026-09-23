@@ -51,11 +51,11 @@ pipeline {
             when { expression { params.ACTION == 'DEPLOY' } }
             steps {
                 bat 'docker network inspect %NETWORK% >nul 2>&1 || docker network create %NETWORK%'
-                bat 'docker inspect %DB% >nul 2>&1 || docker run -d --name %DB% --network %NETWORK% -e POSTGRES_DB=retaildb -e POSTGRES_USER=retailuser -e POSTGRES_PASSWORD=%ORDERS_DB_PSW% -v orders-db-data:/var/lib/postgresql/data postgres:16-alpine'
+                bat 'docker inspect %DB% >nul 2>&1 || docker run -d --name %DB% --network %NETWORK% -e POSTGRES_DB=retaildb -e POSTGRES_USER=retailuser -e POSTGRES_PASSWORD=%ORDERS_DB_PSW% -v orders-db-data:/var/lib/postgresql/data postgres:16-alpine --health-cmd="pg_isready -U retailuser -d retaildb" --health-interval=5s --health-timeout=5s --health-retries=12'
                 bat '''
                     for /L %%i in (1,1,30) do (
                         for /F "delims=" %%s in ('docker inspect %DB% --format="{{.State.Status}}" 2^>nul') do (
-                            if /I "%%s"=="running" exit /b 0
+                            if /I "%%s"=="healthy" exit /b 0
                         )
                         %SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul
                     )
