@@ -287,7 +287,7 @@ pipeline {
                     echo "Candidate: ${proxyTarget}"
                     echo "Switching traffic to: ${proxyTarget}"
 
-                    bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${proxyTarget}"
+                    bat "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${proxyTarget}"
 
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
@@ -379,7 +379,7 @@ pipeline {
                     echo "FAILURE after traffic switch."
                     echo "Restoring traffic to previous active container ${env.BG_ACTIVE}"
 
-                    bat "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.BG_ACTIVE}"
+                    bat "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.BG_ACTIVE}"
 
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
