@@ -337,7 +337,7 @@ pipeline {
 
                     bat "docker inspect ${verifyContainer} --format=\"image={{.Config.Image}} status={{.State.Status}} health={{.State.Health.Status}}\""
 
-                    bat """docker inspect ${verifyContainer} --format="{{range .Config.Env}}{{if eq (index (split . "=") 0) "APP_VERSION"}}version={{index (split . "=") 1}}{{end}}{{end}}""""
+                    bat """docker inspect ${verifyContainer} --format="{{range .Config.Env}}{{println .}}{{end}}" | findstr /B "APP_VERSION=" """
 
                     bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health"
 
