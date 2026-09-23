@@ -36,6 +36,7 @@ pipeline {
 
         BLUE_PORT = '18081'
         GREEN_PORT = '18082'
+        NGINX_CONFIG = 'C:\Users\Admin\retail-platform\nginx\default.conf'
 
 
         BG_TRAFFIC_SWITCHED = 'false'
@@ -153,7 +154,7 @@ pipeline {
             steps {
                 script {
                     def proxyConfig = bat(
-                        script: '@%SystemRoot%\\System32\\findstr.exe /C:"server orders-blue:8081;" /C:"server orders-green:8081;" nginx\\default.conf',
+                        script: '@%SystemRoot%\\System32\\findstr.exe /C:"server orders-blue:8081;" /C:"server orders-green:8081;" %NGINX_CONFIG%',
                         returnStdout: true
                     ).trim()
 
@@ -287,7 +288,7 @@ pipeline {
                     echo "Candidate: ${proxyTarget}"
                     echo "Switching traffic to: ${proxyTarget}"
 
-                    bat "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${proxyTarget}"
+                    bat '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${proxyTarget} -ConfigPath "%NGINX_CONFIG%"'
 
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'
@@ -381,7 +382,7 @@ pipeline {
                     echo "FAILURE after traffic switch."
                     echo "Restoring traffic to previous active container ${env.BG_ACTIVE}"
 
-                    bat "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.BG_ACTIVE}"
+                    bat '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/switch-traffic.ps1 -Target ${env.BG_ACTIVE} -ConfigPath "%NGINX_CONFIG%"'
 
                     bat 'docker exec orders-proxy nginx -t'
                     bat 'docker exec orders-proxy nginx -s reload'

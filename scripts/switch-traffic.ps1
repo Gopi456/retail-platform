@@ -1,9 +1,12 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$Target
+    [string]$Target,
+
+    [Parameter(Mandatory=$true)]
+    [string]$ConfigPath
 )
 
-$config = "nginx/default.conf"
+$config = $ConfigPath
 
 $content = Get-Content $config -Raw
 
