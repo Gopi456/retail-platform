@@ -181,8 +181,17 @@ pipeline {
         stage('Rollback') {
             when { expression { params.ACTION == 'ROLLBACK' } }
             steps {
-                bat 'docker rm -f %ACTIVE% 2>nul || exit /b 0'
-                bat 'docker run -d --name %ACTIVE% --network %NETWORK% -p %ACTIVE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+                script {
+                    echo "Rollback requested"
+                    echo "Current active container: ${env.ACTIVE}"
+                    echo "Rollback version: ${params.VERSION}"
+
+                    bat 'docker rm -f %CANDIDATE% 2>nul || exit /b 0'
+
+                    bat 'docker run -d --name %CANDIDATE% --network %NETWORK% -p %CANDIDATE_PORT%:8081 -e APP_VERSION=%VERSION% -e APP_ENVIRONMENT=PRODUCTION -e DB_HOST=%DB% -e DB_NAME=retaildb -e DB_USER=retailuser -e DB_PASSWORD=%ORDERS_DB_PSW% %IMAGE%:%VERSION%'
+
+                    echo "Rollback candidate ${env.CANDIDATE} started on port ${env.CANDIDATE_PORT}"
+                }
             }
         }
 
