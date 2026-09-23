@@ -1,202 +1,638 @@
-# Retail Platform DevOps Assessment
+# Retail Platform — DevOps Assessment
 
-This repository contains the Flask retail application and the deployment controls for the Git -> Jenkins -> Docker flow. Every deployment is identified by a Git tag, Docker image tag, and commit SHA.
+## Project Overview
 
-Release status: 4.3.0 preparation is in progress, including ongoing development changes.
+This repository demonstrates a complete DevOps implementation for a retail platform application using **Git, Jenkins, Docker, automated testing, CI/CD pipelines, deployment validation, rollback handling, and production-style deployment strategies**.
 
-## Quick access for demonstration
+The assessment is divided into three tasks. Each task focuses on different aspects of source control, continuous integration, containerization, deployment automation, troubleshooting, and production recovery.
 
-Open Jenkins in a browser at [http://localhost:9000](http://localhost:9000). The application URLs depend on which container is running:
+### Technology Stack
 
-| Service | URL | Expected result |
-| --- | --- | --- |
-| DEV | [http://localhost:8081/health](http://localhost:8081/health) | JSON health response |
-| UAT | [http://localhost:8082/health](http://localhost:8082/health) | JSON health response |
-| PRODUCTION | [http://localhost:8083/health](http://localhost:8083/health) | JSON health response |
-| Customer search | `http://localhost:<port>/customers/search?q=Gopi` | JSON customer result |
+* **Source Control:** Git / GitHub
+* **CI/CD:** Jenkins
+* **Containerization:** Docker / Docker Compose
+* **Application:** Python
+* **Testing:** Pytest
+* **Web Server / Reverse Proxy:** Nginx
+* **Database:** PostgreSQL
+* **Scripting:** PowerShell / Shell
+* **Operating Environment:** Windows / Docker Desktop
 
-The port is the host port. The Flask application always listens on container port `8081`. If port `8081` is already allocated, stop the old container or choose another host port for a local test:
+---
 
-```powershell
-docker ps
-docker rm -f <old-container-name>
-$env:APP_PORT = '18081'
+# Task 1 — Git Workflow and Source Control
+
+## Objective
+
+Task 1 focuses on applying Git-based development practices required for a collaborative software project.
+
+The implementation demonstrates:
+
+* Feature branch creation
+* Git branching strategy
+* Commit management
+* Merging branches
+* Rebasing
+* Merge conflict resolution
+* Tags and release management
+* Git history inspection
+* Recovery from Git mistakes
+* Working with remote GitHub repositories
+
+## Git Operations Demonstrated
+
+The task covers practical Git operations including:
+
+```bash
+git branch
+git checkout
+git switch
+git add
+git commit
+git merge
+git rebase
+git log
+git diff
+git tag
+git reset
+git reflog
+git push
+git pull
 ```
 
-## Start the application locally
+## Key Outcomes
 
-The repeatable setup is automated by `scripts\start-demo.ps1`. It prompts for the database password without displaying it, builds the image, starts PostgreSQL and the app, waits for `/health`, and prints the browser URLs:
+* Changes are developed through separate branches.
+* Commits provide traceability for individual changes.
+* Merge and rebase workflows are demonstrated.
+* Conflicts are identified and resolved.
+* Release tags provide identifiable versions.
+* Git history and recovery mechanisms are demonstrated.
+* The repository is maintained in a structured and traceable manner.
 
-```powershell
-.\scripts\start-demo.ps1 -Version 4.2.1 -Environment DEV -Port 18081
-```
+---
 
-To reset the disposable demo database first:
+# Task 2 — Jenkins CI/CD and Docker Automation
 
-```powershell
-.\scripts\start-demo.ps1 -Version 4.2.1 -Environment DEV -Port 18081 -ResetDatabase
-```
+## Objective
 
-Stop the stack while preserving the database volume:
+Task 2 focuses on building an automated CI/CD workflow that connects GitHub, Jenkins, Docker, application testing, and deployment.
 
-```powershell
-.\scripts\stop-demo.ps1
-```
+## CI/CD Workflow
 
-Stop it and delete the disposable database volume:
-
-```powershell
-.\scripts\stop-demo.ps1 -DeleteDatabase
-```
-
-Run these commands from the repository root in PowerShell. The password is supplied through the shell and is not committed to Git:
-
-```powershell
-$env:DB_PASSWORD = 'local-demo-password'
-$env:APP_VERSION = '4.2.1'
-$env:APP_ENVIRONMENT = 'DEV'
-$env:APP_PORT = '18081'
-docker build -t retail-app:4.2.1 .
-docker compose up -d
-docker compose ps
-```
-
-Then open:
+The overall workflow is:
 
 ```text
-http://localhost:18081/health
-http://localhost:18081/db-health
-http://localhost:18081/customers/search?q=Gopi
+Developer
+    |
+    v
+GitHub Repository
+    |
+    v
+Jenkins
+    |
+    +--> Checkout Source
+    |
+    +--> Validate Application
+    |
+    +--> Run Tests
+    |
+    +--> Build Docker Image
+    |
+    +--> Validate Docker Image
+    |
+    +--> Start Container
+    |
+    +--> Validate Application
+    |
+    v
+Docker Application
 ```
 
-View the outputs in the terminal with `docker compose logs -f app`, or in the browser through the endpoints above. Stop the local stack with:
+## Jenkins Automation
 
-```powershell
-docker compose down
-```
+The Jenkins pipeline demonstrates:
 
-Use `docker compose down -v` only when you intentionally want to delete the local database volume.
+* Source-code checkout
+* Git-based pipeline execution
+* Automated application testing
+* Docker image creation
+* Docker container execution
+* Container validation
+* Application health validation
+* Parameterized execution
+* Conditional pipeline behaviour
+* Failure handling
+* Deployment verification
+* Build status reporting
 
-## Application
+Required command failures are allowed to fail the pipeline rather than being silently ignored.
 
-The service listens on container port `8081` and exposes `/health`, `/db-health`, `/payment`, and `/customers/search?q=...`. `/health` reports the application version and `APP_ENVIRONMENT`. The customer search path uses PostgreSQL through the `DB_HOST` service name; it does not use `localhost` inside a container.
+## Docker
 
-## Local multi-environment stack
+The application is packaged and executed using Docker.
 
-The Compose file runs separate app and PostgreSQL containers on an environment-specific bridge network and named database volume. Supply the database password without committing it:
+The implementation demonstrates:
 
-```powershell
-$env:DB_PASSWORD = 'use-a-local-secret'
-$env:APP_VERSION = '4.2.1'
-$env:APP_ENVIRONMENT = 'DEV'
-docker compose up -d
-docker compose ps
-docker inspect retail-db-dev-data
-docker network inspect retail-dev-net
-```
+* Dockerfile-based image creation
+* Image tagging
+* Container lifecycle management
+* Port mapping
+* Environment variables
+* Docker networks
+* Container health checks
+* Application connectivity validation
+* Docker Compose configuration
 
-Use `APP_CONTAINER`, `DB_CONTAINER`, `APP_NETWORK`, `APP_PORT`, and `DB_VOLUME` to select UAT or production names and ports. The host port changes per environment, while the application always listens on `8081` inside its container.
-
-## Jenkins pipeline
-
-`Jenkinsfile` accepts `DEPLOYMENT_ACTION`, `ENVIRONMENT`, `VERSION`, `CONFIRM_PROD`, and `RUN_TESTS`. The `retail-db-credentials` Jenkins username/password credential supplies the database password; it is never stored in the image or repository.
-
-The deployment stages validate the Git tag, record the commit, build an immutable image, start a candidate on a secondary port, validate application and database connectivity, then switch traffic. A failed candidate is removed while the current container remains available. Production requires `CONFIRM_PROD=YES`.
-
-For the mandatory failure demonstration, deploy version `4.2.2`. Jenkins sets `FAIL_HEALTHCHECK=true`, the candidate health request fails, and the post-failure action removes the candidate without removing the current deployment. The console output should retain the old image, candidate image, health result, and final container state.
-
-### Create the Jenkins job
-
-1. Open [http://localhost:9000](http://localhost:9000) and select **New Item**.
-2. Create a **Pipeline** job, for example `retail-platform-deploy`.
-3. In **Pipeline**, select **Pipeline script from SCM**.
-4. Select **Git** and enter `https://github.com/Gopi456/retail-platform.git`.
-5. Use branch `*/assessment/final` for the completed assessment branch.
-6. Set the script path to `Jenkinsfile`, save, and select **Build with Parameters**.
-
-Before running the job, create these Jenkins credentials under **Manage Jenkins -> Credentials**:
-
-| Credential ID | Type | Purpose |
-| --- | --- | --- |
-| `retail-db-credentials` | Username with password | Database password for `Jenkinsfile` |
-| `orders-db-credentials` | Username with password | Database password for `Jenkinsfile.bluegreen` |
-
-The Jenkins agent must have Git, Docker Desktop, and Python available. For a Windows agent, the pipeline expects the repository virtual environment at `venv\Scripts\python.exe`.
-
-### Successful deployment demonstration
-
-In **Build with Parameters**, use:
+Example image format:
 
 ```text
-DEPLOYMENT_ACTION = DEPLOY
-ENVIRONMENT       = DEV
-VERSION           = 4.2.1
-CONFIRM_PROD      = NO
-RUN_TESTS         = YES
+orders-api:<version>
 ```
 
-Open the build number and select **Console Output**. The important evidence appears in the stages and log: resolved branch/environment, Git commit SHA, image tag, candidate health, database connectivity, final container health, and final result. Jenkins stage output is also visible from the build page’s **Stage View**.
+Versioned image tags are used instead of relying exclusively on the `latest` tag.
 
-### Automatic rollback demonstration
+## Testing
 
-Run the same job with:
+Application tests are executed as part of the automated workflow.
+
+Example:
+
+```bash
+pytest -q
+```
+
+Successful tests are required before the deployment process continues.
+
+## Key Outcomes
+
+* GitHub acts as the source repository.
+* Jenkins automates the CI/CD workflow.
+* Docker provides consistent application packaging and execution.
+* Application tests are executed automatically.
+* Deployment failures are detected by the pipeline.
+* Application and container validation are performed before deployment completion.
+
+---
+
+# Task 3 — Production Incident, Pipeline Recovery and Blue-Green Deployment
+
+## Objective
+
+Task 3 simulates a production deployment incident in which a newly deployed application version becomes unavailable.
+
+The task focuses on:
+
+* Production incident investigation
+* Root-cause analysis
+* Jenkins pipeline recovery
+* Deployment validation
+* Blue-green deployment
+* Traffic switching
+* Automatic rollback
+* Version traceability
+* Production verification
+
+---
+
+## Production Architecture
+
+The deployment architecture is:
 
 ```text
-DEPLOYMENT_ACTION = DEPLOY
-ENVIRONMENT       = DEV
-VERSION           = 4.2.2
-CONFIRM_PROD      = NO
-RUN_TESTS         = YES
+GitHub
+   |
+   v
+Jenkins
+   |
+   v
+Docker Image
+   |
+   +-------------------+
+   |                   |
+   v                   v
+ BLUE                GREEN
+orders-blue       orders-green
+   |                   |
+   +---------+---------+
+             |
+             v
+           Nginx
+             |
+             v
+        Production
+             |
+             v
+        PostgreSQL
 ```
 
-Version `4.2.2` intentionally returns HTTP 500 from `/health`. The expected console sequence is: candidate starts, health validation fails, candidate is removed, the previous image is restored or retained, and the Jenkins build ends in failure. This failed console output is required assessment evidence.
+The blue-green strategy allows the existing production version to remain available while a new candidate version is started and validated.
 
-### Production protection
+---
 
-For production, use `ENVIRONMENT=PRODUCTION` and set `CONFIRM_PROD=YES`. Any other value is rejected before Docker changes are made. A manual rollback uses `DEPLOYMENT_ACTION=ROLLBACK` and the image version to restore.
+## Blue-Green Deployment
 
-### Blue-green job
+The deployment uses two application environments:
 
-Create a second Pipeline job from the same repository, set the script path to `Jenkinsfile.bluegreen`, and use branch `*/assessment/final`. It uses `orders-blue`, `orders-green`, and `orders-network`. The candidate is validated before traffic switching; failed candidates are removed while the active color remains available.
+| Environment | Container      | Host Port | Container Port |
+| ----------- | -------------- | --------: | -------------: |
+| BLUE        | `orders-blue`  |     18081 |           8081 |
+| GREEN       | `orders-green` |     18082 |           8081 |
 
-For the first blue-green deployment, configure the job with:
+The Nginx production proxy exposes the application through the production endpoint.
 
 ```text
-ACTION         = DEPLOY
-VERSION        = 7.9
-CONFIRM_PROD  = YES
+Nginx
+  |
+  +--> BLUE
+  |
+  OR
+  |
+  +--> GREEN
 ```
 
-The job creates `orders-network` and `orders-db` automatically when they do not exist. Add the Jenkins credential `orders-db-credentials` before starting the build. After a successful deployment, check the active endpoint at `http://localhost:8080/health`; candidate ports are `8081` and `8082` during validation.
+Only the validated environment receives production traffic.
 
-## Where to find evidence
+---
 
-| Evidence | Location |
-| --- | --- |
-| Jenkins parameters | Jenkins job -> **Build with Parameters** |
-| Successful deployment | Jenkins build -> **Console Output** and **Stage View** |
-| Failed deployment and rollback | Jenkins failed build -> **Console Output** |
-| Application response | Browser at the selected `/health`, `/db-health`, or search URL |
-| Git history and tags | `git log --graph --oneline --decorate --all` and `git tag --list` |
-| Images and containers | `docker images`, `docker ps -a`, `docker inspect <container>` |
-| Network and volume | `docker network inspect <network>`, `docker volume inspect <volume>` |
+## Deployment Flow
 
-To save console evidence for a mentor, use Jenkins build **Console Output -> Download** or copy the console text into the assessment evidence folder. Do not include passwords or credential values.
+The Task 3 pipeline contains meaningful deployment stages:
 
-## Evidence commands
-
-```powershell
-git log --graph --oneline --decorate --all
-git tag --list
-docker images retail-app
-docker ps -a
-docker inspect retail-app-dev --format '{{.Config.Image}} {{.State.Health.Status}}'
-docker network inspect retail-dev-net
-docker volume inspect retail-platform_retail-db-dev-data
+```text
+Checkout
+   ↓
+Validate Version
+   ↓
+Unit/Application Test
+   ↓
+Docker Build
+   ↓
+Docker Image Validation
+   ↓
+Start Candidate
+   ↓
+Container Validation
+   ↓
+Application Health Check
+   ↓
+Integration Check
+   ↓
+Traffic Switch
+   ↓
+Old Version Cleanup
+   ↓
+Deployment Verification
 ```
 
-Run the application checks with the repository interpreter:
+### Deployment Rules
 
-```powershell
-.\venv\Scripts\python.exe -m pytest -q
+### Successful Deployment
+
+```text
+Candidate starts
+      ↓
+Container validation
+      ↓
+Health check
+      ↓
+Application validation
+      ↓
+Database integration check
+      ↓
+Traffic switch
+      ↓
+Deployment verification
+      ↓
+Remove old version
 ```
+
+### Failed Deployment
+
+```text
+Candidate starts
+      ↓
+Validation fails
+      ↓
+Candidate removed
+      ↓
+Current production version retained
+```
+
+This prevents an unsuccessful candidate from replacing the existing production version.
+
+---
+
+# Production Incident Investigation
+
+The production incident investigation includes:
+
+* Jenkins console analysis
+* Git commit verification
+* Branch verification
+* Docker container status
+* Container logs
+* Environment variables
+* Port mappings
+* Docker network inspection
+* Application health checks
+* Database connectivity
+* Process/application port verification
+* Traffic verification
+
+The investigation process is documented in:
+
+```text
+docs/INCIDENT-RCA.md
+```
+
+---
+
+# Pipeline Recovery
+
+Two deployment failures were investigated during pipeline recovery.
+
+## Failure Investigation 1
+
+The candidate deployment successfully started and passed application/database validation, but the traffic-switch operation failed because of a Windows PowerShell compatibility/path handling issue.
+
+The pipeline correctly:
+
+* Detected the traffic-switch failure
+* Stopped the deployment
+* Removed the candidate container
+* Preserved the existing production version
+
+The traffic-switch implementation was then corrected.
+
+---
+
+## Failure Investigation 2
+
+After traffic switching was successfully implemented, deployment verification failed because the Windows `findstr` executable was not resolved correctly by the Jenkins environment.
+
+The pipeline correctly:
+
+* Detected the verification failure
+* Prevented old-version cleanup
+* Removed the candidate
+* Preserved the current production version
+
+The verification command was corrected to use the explicit Windows executable path.
+
+---
+
+# Successful Deployment
+
+After the pipeline corrections, the deployment completed successfully.
+
+The final production deployment demonstrated:
+
+```text
+Application Version: 7.9
+Container: orders-green
+Image: orders-api:7.9
+Health: healthy
+Database: CONNECTED
+```
+
+Production health verification:
+
+```text
+/health
+```
+
+returns the deployed application version and production status.
+
+Database verification:
+
+```text
+/db-health
+```
+
+confirms database connectivity.
+
+---
+
+# Docker Network and Database Persistence
+
+The application components communicate through the Docker network:
+
+```text
+orders-network
+```
+
+The deployment includes:
+
+```text
+orders-proxy
+orders-green / orders-blue
+orders-db
+```
+
+The PostgreSQL database uses a named Docker volume:
+
+```text
+orders-db-data
+```
+
+This provides persistent database storage independent of the application container lifecycle.
+
+---
+
+# Version and Git Traceability
+
+Each deployment is associated with:
+
+* Application version
+* Docker image tag
+* Git commit SHA
+* Jenkins build
+* Release tag
+
+Example release:
+
+```text
+Application Version: 7.9
+Docker Image: orders-api:7.9
+Git Release Tag: v7.9
+```
+
+The release tag `v7.9` is associated with the corresponding release commit, providing traceability from the deployed application back to source control.
+
+The application also exposes its version through the health endpoint.
+
+---
+
+# Failure Recovery Policy
+
+The deployment follows a simple production recovery policy.
+
+### PASS
+
+```text
+Candidate validated
+       ↓
+Traffic switched
+       ↓
+Production verified
+       ↓
+Old version removed
+```
+
+### FAIL
+
+```text
+Candidate validation fails
+       ↓
+Candidate removed
+       ↓
+Current production retained
+```
+
+This ensures that a failed deployment does not automatically remove a known working production version.
+
+---
+
+# Repository Structure
+
+The repository contains the main application, deployment, testing, and documentation components.
+
+```text
+retail-platform/
+│
+├── app/
+│   ├── __init__.py
+│   ├── app.py
+│   ├── customers.py
+│   ├── database.py
+│   └── requirements.txt
+│
+├── tests/
+│   ├── __init__.py
+│   └── test_app.py
+│
+├── scripts/
+│   ├── start-demo.ps1
+│   ├── stop-demo.ps1
+│   └── switch-traffic.ps1
+│
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── INCIDENT-RCA.md
+│
+├── Dockerfile
+├── docker-compose.yml
+├── Jenkinsfile
+├── Jenkinsfile.bluegreen
+├── nginx/
+│   └── default.conf
+├── README.md
+└── .gitignore
+```
+
+---
+
+# DevOps Flow
+
+The complete project demonstrates the following DevOps lifecycle:
+
+```text
+Git
+ |
+ | Source Control
+ v
+GitHub
+ |
+ | Source Repository
+ v
+Jenkins
+ |
+ | CI/CD Automation
+ v
+Automated Tests
+ |
+ v
+Docker Build
+ |
+ v
+Docker Image
+ |
+ v
+Container Validation
+ |
+ v
+Deployment
+ |
+ v
+Health & Integration Checks
+ |
+ v
+Traffic Management
+ |
+ v
+Production Verification
+ |
+ v
+Release Traceability
+```
+
+---
+
+# Key DevOps Practices Demonstrated
+
+Across all three tasks, the project demonstrates:
+
+* Version-controlled development
+* Git branching and release management
+* Automated CI/CD
+* Automated application testing
+* Docker image creation
+* Container lifecycle management
+* Health checks
+* Environment configuration
+* Docker networking
+* Database connectivity
+* Production deployment validation
+* Blue-green deployment
+* Failure detection
+* Automatic candidate cleanup
+* Production rollback protection
+* Git commit traceability
+* Immutable versioned Docker images
+* Incident investigation
+* Root-cause documentation
+
+---
+
+# Assessment Deliverables
+
+The repository provides the following assessment artifacts:
+
+* Git repository
+* Git branches and history
+* Release tags
+* Jenkins pipelines
+* Dockerfile
+* Docker Compose configuration
+* Application source
+* Automated tests
+* Deployment scripts
+* Nginx configuration
+* Blue-green deployment implementation
+* Deployment verification
+* Incident RCA
+* Architecture documentation
+* Successful deployment evidence
+* Failed deployment investigations
+* Rollback/recovery evidence
+* Docker network evidence
+* Database volume evidence
+
+---
+
+# Conclusion
+
+This project demonstrates a complete progression from **Git-based source control to automated Jenkins CI/CD, Docker-based application deployment, production incident investigation, and blue-green production deployment**.
+
+The implementation emphasizes repeatability, traceability, automated validation, controlled traffic switching, and safe recovery from deployment failures.
