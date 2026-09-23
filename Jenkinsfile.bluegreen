@@ -313,7 +313,9 @@ pipeline {
 
                 bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/db-health"
 
-                bat "%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health | findstr /C:"\"version\":\"%VERSION%\"" >nul"
+                bat '''%SystemRoot%\\System32\\curl.exe --fail --silent --show-error http://localhost:18080/health > traffic-health.json
+%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command "\$json = Get-Content traffic-health.json -Raw | ConvertFrom-Json; if (\$json.version -ne \"%VERSION%\") { exit 1 }"
+'''
 
                 echo "Traffic verification passed for ${env.BG_CANDIDATE}"
                 echo "Expected production version: ${params.VERSION}"
